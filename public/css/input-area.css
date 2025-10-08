@@ -198,3 +198,21 @@ body.dark-mode #send-btn:hover { background-color: var(--bg-button-hover); }
         width: 100%;
     }
 }
+
+/* ========================================================== */
+/* [✅ 추가된 부분] TTS 스피커 버튼 스타일 */
+/* ========================================================== */
+
+/* 기본적으로 OFF 아이콘은 숨겨둡니다. */
+#tts-btn .icon-tts-off {
+    display: none;
+}
+
+/* 'active' 클래스가 붙었을 때 (TTS가 켜졌을 때) */
+#tts-btn.active .icon-tts-on {
+    display: none; /* ON 아이콘을 숨깁니다. */
+}
+
+#tts-btn.active .icon-tts-off {
+    display: block; /* OFF 아이콘을 보여줍니다. */
+}

@@ -79,6 +79,18 @@ export function clearInput() {
     autoResizeTextarea.call(elements.messageInput);
 }
 
+// ==========================================================
+// [✅ 바로 이 부분이 추가/수정된 부분입니다!]
+// 음성 인식 결과를 입력창에 설정하는 새로운 함수
+export function setTextValue(text) {
+    elements.messageInput.value = text;
+    // 텍스트 길이에 맞춰 입력창 크기를 조절하고, 전송 버튼 상태를 업데이트합니다.
+    autoResizeTextarea.call(elements.messageInput);
+    render(appState); 
+}
+// [✅ 여기까지가 추가/수정된 부분입니다!]
+// ==========================================================
+
 function renderFilePreviews(files) {
     elements.imagePreviewContainer.innerHTML = '';
     if (!files || files.length === 0) return;

@@ -16,6 +16,8 @@ import { UsageReporter } from '../modules/settings/UsageReporter.js';
 import * as AnimationManager from '../modules/AnimationManager.js';
 import { saveData } from '../../utils/storage.js';
 
+let recognition = null; // ✅ 음성 인식 객체를 저장할 변수
+
 const views = {
     chat: () => $('.chat-area'),
     settings: () => $('#settings-page')
@@ -160,6 +162,70 @@ export const handlers = {
             InputArea.render(appState);
         }
     },
+    // ==========================================================
+    // [✅ 바로 이 부분이 추가/수정된 부분입니다!]
+    handleMicClick() {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            Toast.show("죄송합니다, 이 브라우저는 음성 인식을 지원하지 않습니다.");
+            return;
+        }
+
+        const micButton = $('#mic-btn');
+        const isActive = micButton.classList.contains('active');
+
+        // recognition 객체가 파일 상단에 선언되어 있어야 합니다. (let recognition = null;)
+        if (recognition && isActive) {
+            recognition.stop();
+            // onend 이벤트 핸들러가 알아서 active 클래스를 제거해 줄 것입니다.
+            return;
+        }
+
+        recognition = new SpeechRecognition();
+        recognition.lang = 'ko-KR';
+        recognition.interimResults = false;
+        recognition.maxAlternatives = 1;
+
+        recognition.onstart = () => {
+            micButton.classList.add('active');
+            Toast.show("듣고 있어요. 말씀해주세요...");
+        };
+
+        recognition.onresult = (event) => {
+            const transcript = event.results[0][0].transcript;
+            console.log('음성 인식 결과:', transcript);
+            
+            // InputArea.js에 텍스트를 설정하는 기능이 있는지 확인해야 합니다.
+            // 이 프로젝트 구조상 InputArea 모듈을 통해 제어하는 것이 좋습니다.
+            InputArea.setTextValue(transcript); 
+
+            handlers.handleSendMessage();
+        };
+
+        recognition.onend = () => {
+            micButton.classList.remove('active');
+            console.log('음성 인식 종료.');
+            recognition = null; // 다음 인식을 위해 객체 정리
+        };
+
+        recognition.onerror = (event) => {
+            console.error('음성 인식 오류:', event.error);
+            Toast.show(`음성 인식 오류: ${event.error}`);
+            // onend가 호출되므로 여기서 active 클래스를 제거할 필요가 없습니다.
+        };
+        
+        recognition.start();
+    },
+
+    // [✅ 새로운 핸들러 추가]
+     handleTtsClick() {
+         const ttsButton = $('#tts-btn');
+         const isActive = ChatService.toggleTTS();
+         ttsButton.classList.toggle('active', isActive);
+     },
+     
+    // [✅ 여기까지가 추가/수정된 부분입니다!]
+    // ==========================================================
     async handleSendMessage() { await ChatService.sendMessage(); },
     handleCopyMessage(messageId) { if (!messageId) return; const session = appState.sessions[appState.activeSessionId]; if (!session) return; const message = session.history.find(m => m.id === messageId); if (!message) return; const textToCopy = message.parts.filter(p => p.type === 'text').map(p => p.text).join('\n\n'); if (textToCopy) { navigator.clipboard.writeText(textToCopy).then(() => { Toast.show('클립보드에 복사되었습니다.'); }).catch(err => { console.error('클립보드 복사 실패:', err); Toast.show('복사에 실패했습니다.'); }); } else { Toast.show('복사할 텍스트가 없습니다.'); } },
     handleCopyCodeBlock(buttonElement) { const wrapper = buttonElement.closest('.code-block-wrapper'); if (!wrapper) return; const codeElement = wrapper.querySelector('pre > code'); if (!codeElement) return; const codeText = codeElement.innerText; navigator.clipboard.writeText(codeText).then(() => { Toast.show('코드가 클립보드에 복사되었습니다.'); }).catch(err => { console.error('코드 블록 복사 실패:', err); Toast.show('코드 복사에 실패했습니다.'); }); },

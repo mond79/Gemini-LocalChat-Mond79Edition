@@ -9,6 +9,9 @@ import * as AnimationManager from '../modules/AnimationManager.js';
 import * as SessionList from '../../components/SessionList.js';
 import { saveData } from '../../utils/storage.js';
 
+let ttsEnabled = false; // TTS 기능 활성화 여부
+let synth = window.speechSynthesis; // 웹 음성 합성 API
+
 let currentRequestController = null;
 
 const getApiKeyIdentifier = (key) => key ? `key_${key.slice(-4)}` : 'no_key';
@@ -114,6 +117,16 @@ async function executeChat(sessionId, signal) {
         const newMessage = Session.addMessage(appState, sessionId, 'model', [{ type: 'text', text: fullResponseText }], metadata);
         ChatContainer.appendMessage(sessionId, newMessage);
         Session.updateTitleFromHistory(appState, sessionId);
+
+        // ==========================================================
+        // [✅ 바로 이 부분이 추가/수정된 부분입니다!]
+        // TTS 기능이 켜져 있다면, 답변을 목소리로 읽어줍니다.
+        if (ttsEnabled && fullResponseText) {
+            speakText(fullResponseText);
+        }
+        // [✅ 여기까지가 추가/수정된 부분입니다!]
+        // ==========================================================
+
         SessionList.render(appState);
         if (appState.activeSessionId !== sessionId) {
             Toast.show(`'${session.title || "이전"}' 세션의 답변이 완료되었습니다.`);
@@ -234,4 +247,36 @@ export function readFileAsPromise(file) {
             reader.readAsText(file);
         }
     });
+}
+
+// [✅ 새로운 함수 1] 텍스트를 음성으로 읽어주는 함수
+function speakText(text) {
+    if (synth.speaking) {
+        console.log('SpeechSynthesis is already speaking. Cancelling...');
+        synth.cancel();
+    }
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'ko-KR'; // 한국어 목소리 설정
+    utterance.rate = 1; // 말하기 속도
+    utterance.pitch = 1; // 음높이
+    
+    utterance.onerror = (event) => {
+        console.error('SpeechSynthesis Error', event);
+        Toast.show(`음성 출력 오류: ${event.error}`);
+    };
+
+    synth.speak(utterance);
+}
+
+// [✅ 새로운 함수 2] TTS 버튼의 상태를 토글하는 함수 (외부에서 호출할 예정)
+export function toggleTTS() {
+    ttsEnabled = !ttsEnabled;
+    Toast.show(ttsEnabled ? "음성 답변이 활성화되었습니다." : "음성 답변이 비활성화되었습니다.");
+    
+    // 만약 비활성화될 때 말하고 있었다면, 중단시킵니다.
+    if (!ttsEnabled && synth.speaking) {
+        synth.cancel();
+    }
+
+    return ttsEnabled;
 }

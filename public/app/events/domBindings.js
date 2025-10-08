@@ -101,6 +101,12 @@ export function bindEvents(handlers) {
     });
 
     // --- Input Area Bindings ---
+    // Mic Button Binding
+    $('#mic-btn')?.addEventListener('click', handlers.handleMicClick);
+
+    // TTS Button Binding
+    $('#tts-btn')?.addEventListener('click', handlers.handleTtsClick);
+    // ==========================================================
     const messageInput = $('#message-input');
     messageInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handlers.handleSendMessage(); } });
     messageInput.addEventListener('input', handlers.handleInputUpdate);
