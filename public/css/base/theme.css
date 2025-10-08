@@ -1,0 +1,75 @@
+/* --- CSS Variables & Theming (Claude Style) --- */
+:root {
+    --font-primary: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --bg-main: #f7f7f7; /* [MODIFIED] Claude-like off-white */
+    --bg-sidebar: #ECECEC; /* [MODIFIED] Slightly darker sidebar */
+    --bg-chat-area: #f7f7f7; /* [MODIFIED] Consistent with main bg */
+    --bg-chat-header: #f7f7f7;
+    --bg-input-area: #ffffff;
+    --bg-message-user: transparent; /* [MODIFIED] No bubble background */
+    --bg-message-model: transparent; /* [MODIFIED] No bubble background */
+    --bg-message-system: #fdf6e3;
+    --bg-hover: #e8e5d9;
+    --bg-active: #4b4a48;
+    --bg-pinned: #e6e2d6;
+    --bg-pinned-active: #5c5a58;
+    --bg-modal-overlay: rgba(40, 38, 33, 0.6);
+    --bg-modal-content: #fbfaf8;
+    --bg-button: #ffffff;
+    --bg-button-hover: #f5f5f5;
+    --bg-button-disabled: #cccccc;
+    --bg-send-button: #4b4a48;
+    --text-primary: #111111; /* [MODIFIED] Darker text for contrast */
+    --text-secondary: #555555; /* [MODIFIED] Adjusted secondary text */
+    --text-light: #fff;
+    --text-system: #8a6d3b;
+    --border-primary: #e0ddd3;
+    --border-secondary: #d1cfc7;
+    --border-user-message: #b0c4de; /* [MODIFIED] LightSteelBlue - For user message indicator */
+    --shadow-light: 0 1px 2px rgba(0,0,0,0.05);
+    --shadow-dark: 0 3px 6px rgba(0,0,0,0.1);
+    --favorite-yellow: #ffc107;
+    --favorite-bg: #fff9e6;
+    --chart-grid-color: rgba(0, 0, 0, 0.07);
+    --chart-tooltip-bg: rgba(0, 0, 0, 0.8);
+    --chart-tooltip-text: #fff;
+    --danger-red: #dc3545;
+    --danger-red-hover: #c82333;
+}
+
+body.dark-mode {
+    --bg-main: #2e2e2e; /* [MODIFIED] Claude-like dark grey */
+    --bg-sidebar: #252526;
+    --bg-chat-area: #2e2e2e; /* [MODIFIED] Consistent with main bg */
+    --bg-chat-header: #2e2e2e;
+    --bg-input-area: #1e1e1e;
+    --bg-message-user: transparent; /* [MODIFIED] No bubble background */
+    --bg-message-model: transparent; /* [MODIFIED] No bubble background */
+    --bg-message-system: #4a412a;
+    --bg-hover: #3e3e42;
+    --bg-active: #3a76f0;
+    --bg-pinned: #3a4a6e;
+    --bg-pinned-active: #3a6cd0;
+    --bg-modal-overlay: rgba(0, 0, 0, 0.7);
+    --bg-modal-content: #2d2d2d;
+    --bg-button: #3c3c40;
+    --bg-button-hover: #505052;
+    --bg-button-disabled: #444444;
+    --bg-send-button: #4a4a50;
+    --text-primary: #eeeeee; /* [MODIFIED] Off-white for readability */
+    --text-secondary: #a0a0a0;
+    --text-light: #fff;
+    --text-system: #f0e6c0;
+    --border-primary: #404044;
+    --border-secondary: #4a4a50;
+    --border-user-message: #6495ed; /* [MODIFIED] CornflowerBlue - For user message indicator */
+    --shadow-light: 0 1px 2px rgba(0,0,0,0.2);
+    --shadow-dark: 0 3px 9px rgba(0,0,0,0.4);
+    --favorite-yellow: #ffc107;
+    --favorite-bg: #4d3c1a;
+    --chart-grid-color: rgba(255, 255, 255, 0.15);
+    --chart-tooltip-bg: rgba(255, 255, 255, 0.9);
+    --chart-tooltip-text: #000;
+    --danger-red: #e04454;
+    --danger-red-hover: #d13342;
+}

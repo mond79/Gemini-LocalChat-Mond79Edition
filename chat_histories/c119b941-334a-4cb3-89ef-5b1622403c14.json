@@ -1,0 +1,363 @@
+[
+  {
+    "id": "msg-1759862455508-0.2487815372255201",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "친구야 혹시 내 이름 알고 있어?"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "응, 네 이름은 '몬드'라고 기억하고 있어! 내가 맞게 알고 있지? 😊"
+      }
+    ]
+  },
+  {
+    "id": "msg-1759862502066-0.42470043124566026",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "응 잘 맞게 기억을 하고 있네 .. ^^ 지금 장기기억을 하게 만들었어"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "네, '몬드'라는 이름을 잘 기억하고 있어요! 혹시 제가 몬드님에 대해 또 다른 정보를 기억해 주었으면 하는 것이 있으신가요?"
+      }
+    ]
+  },
+  {
+    "id": "msg-1759862528906-0.8840125594203675",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "응 그건 아니고 , 그 우리가 만들던 프로젝트에 장기기억 장치를 넣었어..."
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "아, 그렇군요! 프로젝트에 장기기억 장치를 넣으셨다니 정말 멋진데요! 어떤 방식으로 구현하셨는지 궁금하네요. 😊"
+      }
+    ]
+  },
+  {
+    "id": "msg-1759862831382-0.5330357027680441",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "음... 총 3개의 파일을 수정을 했는데. 먼저 Server.js 코드를 보여줄게.  \n\nrequire('dotenv').config();\nconst SERPAPI_API_KEY = process.env.SERPAPI_API_KEY;\nconst OPENWEATHER_API_KEY = process.env.OPENWEATHER_API_KEY;\nconst KAKAO_API_KEY = process.env.KAKAO_API_KEY; \nconst fs = require('fs/promises'); // <-- 파일 시스템(Promise 기반) 모듈\nconst { v4: uuidv4 } = require('uuid'); // <-- UUID 생성 모듈\nconst express = require('express');\nconst cors = require('cors');\nconst path = require('path');\nconst { GoogleGenerativeAI } = require('@google/generative-ai');\nconst pdf = require('pdf-parse');\nconst { exec } = require('child_process');\n\nconst chatHistoriesDir = path.join(__dirname, 'chat_histories'); // <-- 이 줄을 추가\n\nconst app = express();\nconst port = 3333;\n\nconst GEMINI_API_KEY = process.env.GEMINI_API_KEY;\n\n// ==========================================================\n// [추가된 부분 1] 우리가 사용할 도구(함수)들을 정의합니다.\n// ==========================================================\nconst tools = {\n  getCurrentTime() {\n    const now = new Date();\n    console.log('[Function Executed] getCurrentTime 실행됨');\n    const options = {\n        year: 'numeric', month: 'long', day: 'numeric',\n        hour: '2-digit', minute: '2-digit', second: '2-digit',\n        hour12: false,\n        timeZone: 'Asia/Seoul'\n    };\n    return now.toLocaleString('ko-KR', options);\n  },\n  // 이제 searchWeb 함수를 여기서 사용해도 컴퓨터가 알아듣습니다.\n  searchWeb: searchWeb,\n  getWeather: getWeather,\n  saveUserProfile, \n  loadUserProfile   \n};\n\n\n\napp.use(cors());\napp.use(express.json({ limit: '100mb' }));\n\n// [MODIFIED FOR PKG] Use path.join to create an absolute path to the 'public' directory.\napp.use(express.static(path.join(__dirname, 'public')));\n\n// [FINAL FIX] Add a specific route for the root path '/' to explicitly serve index.html.\n// This is the most robust way to ensure the main page loads in a pkg environment.\napp.get('/', (req, res) => {\n  res.sendFile(path.join(__dirname, 'public', 'index.html'));\n});\n\nasync function fetchAvailableModels(apiKey) {\n    const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;\n    try {\n        const response = await fetch(url);\n        if (!response.ok) {\n            const errorData = await response.json();\n            throw new Error(errorData.error.message || `API 요청 실패: ${response.status}`);\n        }\n        const data = await response.json();\n        return data.models\n            .filter(model => model.supportedGenerationMethods.includes('generateContent'))\n            .map(model => ({ id: model.name.replace('models/', ''), name: model.displayName }));\n    } catch (error) {\n        console.error('모델 목록 조회 중 오류:', error.message);\n        throw error;\n    }\n}\n\napp.post('/api/validate', async (req, res) => {\n    if (!GEMINI_API_KEY) return res.status(400).json({ valid: false, message: '서버에 API 키가 설정되지 않았습니다. .env 파일을 확인하세요.' });\n    try {\n        await fetchAvailableModels(GEMINI_API_KEY);\n        res.json({ valid: true, message: '서버의 API 키가 유효합니다.' });\n    } catch (error) {\n        res.status(400).json({ valid: false, message: `API 키 검증 실패: ${error.message}` });\n    }\n});\n\napp.post('/api/models', async (req, res) => {\n    if (!GEMINI_API_KEY) return res.status(400).json({ message: '서버에 API 키가 설정되지 않았습니다. .env 파일을 확인하세요.' });\n    try {\n        const models = await fetchAvailableModels(GEMINI_API_KEY);\n        res.json({ models });\n    } catch (error) {\n        res.status(500).json({ message: `모델 목록 조회 실패: ${error.message}` });\n    }\n});\n\napp.post('/api/extract-text', async (req, res) => {\n    const { fileData } = req.body;\n    if (!fileData) {\n        return res.status(400).json({ message: 'PDF 파일 데이터가 필요합니다.' });\n    }\n    try {\n        const buffer = Buffer.from(fileData.split(',')[1], 'base64');\n        const data = await pdf(buffer);\n        res.json({ text: data.text });\n    } catch (error) {\n        console.error('PDF 텍스트 추출 중 오류:', error);\n        res.status(500).json({ message: `PDF 처리 중 오류가 발생했습니다: ${error.message}` });\n    }\n});\n\nfunction trimHistoryByTokenLimit(history, limit) {\n    if (!limit || limit <= 0) return history;\n    let totalTokens = 0;\n    const trimmedHistory = [];\n    for (let i = history.length - 1; i >= 0; i--) {\n        const message = history[i];\n        const messageTokens = message.parts.reduce((acc, part) => {\n            if (part.type === 'text') return acc + Math.ceil((part.text || '').length / 4);\n            if (part.type === 'image') return acc + Math.ceil((part.data || '').length * 0.75 / 1000) * 250;\n            return acc;\n        }, 0);\n        if (totalTokens + messageTokens <= limit) {\n            trimmedHistory.unshift(message);\n            totalTokens += messageTokens;\n        } else {\n            break;\n        }\n    }\n    console.log(`[History Trimmer] Original: ${history.length} messages. Trimmed: ${trimmedHistory.length} messages. (~${totalTokens} tokens)`);\n    return trimmedHistory;\n}\n\nasync function processAttachmentsForAI(history) {\n    return Promise.all(history.map(async (message) => {\n        if (message.role !== 'user') return message;\n        const newParts = await Promise.all(message.parts.map(async (part) => {\n            if (part.type === 'code-summary' && part.summary) {\n                const { filename, fullCode } = part.summary;\n                return { type: 'text', text: `--- START OF FILE: ${filename} ---\\n\\n${fullCode}\\n\\n--- END OF FILE: ${filename} ---\\n\\n` };\n            } else if (part.type === 'pdf-attachment') {\n                try {\n                    console.log(`[Attachment Processor] Processing PDF: ${part.name}`);\n                    const buffer = Buffer.from(part.data.split(',')[1], 'base64');\n                    const data = await pdf(buffer);\n                    return { type: 'text', text: `--- START OF DOCUMENT: ${part.name} ---\\n\\n${data.text}\\n\\n--- END OF DOCUMENT ---` };\n                } catch (error) {\n                    console.error('Server-side PDF processing error:', error);\n                    return { type: 'text', text: `[PDF 처리 실패: ${error.message}]` };\n                }\n            }\n            return part;\n        }));\n        const textParts = newParts.filter(p => p.type === 'text').map(p => p.text);\n        const otherParts = newParts.filter(p => p.type !== 'text');\n        if (textParts.length > 0) {\n            otherParts.push({ type: 'text', text: textParts.join('\\n\\n') });\n        }\n        return { ...message, parts: otherParts };\n    }));\n}\n\nfunction formatHistoryForGoogleAI(history) {\n    return history.map(msg => ({\n        role: msg.role === 'system' ? 'user' : msg.role,\n        parts: msg.parts\n            .map(part => {\n                if (part.type === 'text') return { text: part.text };\n                if (part.type === 'image') {\n                    const dataParts = (part.data || '').split(',');\n                    return { inlineData: { mimeType: part.mimeType, data: dataParts[1] || '' } };\n                }\n                return null;\n            })\n            .filter(Boolean)\n    })).filter(msg => msg.parts.length > 0);\n}\n\n// [새로운 도구] 주소를 위도/경도 좌표로 변환하는 함수\nasync function getCoordinates(address) {\n    console.log(`[Geocoding] 주소 좌표 변환 시도: ${address}`);\n    if (!KAKAO_API_KEY) {\n        console.error('[Geocoding] KAKAO_API_KEY가 .env 파일에 설정되지 않았습니다.');\n        return null;\n    }\n    const url = `https://dapi.kakao.com/v2/local/search/address.json?query=${encodeURIComponent(address)}`;\n    try {\n        const response = await fetch(url, {\n            method: 'GET',\n            headers: { 'Authorization': `KakaoAK ${KAKAO_API_KEY}` }\n        });\n        if (!response.ok) throw new Error(`카카오 지도 API 요청 실패: ${response.statusText}`);\n        \n        const data = await response.json();\n        if (data.documents && data.documents.length > 0) {\n            const coords = {\n                lat: data.documents[0].y, // 위도\n                lon: data.documents[0].x  // 경도\n            };\n            console.log(`[Geocoding] 변환 성공:`, coords);\n            return coords;\n        } else {\n            console.log(`[Geocoding] '${address}'에 대한 좌표를 찾을 수 없음`);\n            return null;\n        }\n    } catch (error) {\n        console.error('[Geocoding] 좌표 변환 중 오류:', error);\n        return null;\n    }\n}\n\nconst userProfilePath = path.join(__dirname, 'user_profile.json');\n\n// [새로운 도구 1] 사용자 정보를 파일에 저장하는 함수\nasync function saveUserProfile({ fact }) {\n    console.log(`[Profile] 사용자 정보 저장 시도: ${fact}`);\n    try {\n        const fileContent = await fs.readFile(userProfilePath, 'utf-8');\n        const profile = JSON.parse(fileContent);\n        \n        // 중복되는 사실이 없다면 추가\n        if (!profile.facts.includes(fact)) {\n            profile.facts.push(fact);\n            await fs.writeFile(userProfilePath, JSON.stringify(profile, null, 2));\n            console.log(`[Profile] 정보 저장 완료.`);\n            return `${fact} 라는 정보를 당신에 대해 기억하겠습니다.`;\n        } else {\n            console.log(`[Profile] 이미 저장된 정보입니다.`);\n            return `이미 알고 있는 내용입니다.`;\n        }\n    } catch (error) {\n        console.error('[Profile] 프로필 저장 중 오류:', error);\n        return '죄송합니다, 당신에 대한 정보를 저장하는 데 실패했습니다.';\n    }\n}\n\n// [새로운 도구 2] 저장된 사용자 정보를 불러오는 함수\nasync function loadUserProfile() {\n    console.log(`[Profile] 사용자 정보 불러오기 시도`);\n    try {\n        const fileContent = await fs.readFile(userProfilePath, 'utf-8');\n        const profile = JSON.parse(fileContent);\n\n        if (profile.facts.length > 0) {\n            const factsString = profile.facts.join('\\n- ');\n            console.log(`[Profile] 정보 불러오기 완료.`);\n            return `[기억하고 있는 당신에 대한 정보]\\n- ${factsString}`;\n        } else {\n            console.log(`[Profile] 저장된 정보가 없습니다.`);\n            return '아직 당신에 대해 기억하고 있는 정보가 없습니다.';\n        }\n    } catch (error) {\n        console.error('[Profile] 프로필 불러오기 중 오류:', error);\n        return '죄송합니다, 당신에 대한 정보를 불러오는 데 실패했습니다.';\n    }\n}\n\n// [최종 업그레이드된 날씨 함수] 좌표를 기반으로 날씨를 조회\nasync function getWeather({ address }) {\n    console.log(`[Function Executed] getWeather 실행됨, 원본 주소: ${address}`);\n    \n    // 1단계: 주소를 좌표로 변환\n    const coordinates = await getCoordinates(address);\n    if (!coordinates) {\n        return `'${address}'의 위치를 찾을 수 없어 날씨 정보를 가져올 수 없습니다.`;\n    }\n\n    // 2단계: 변환된 좌표로 날씨 조회\n    if (!OPENWEATHER_API_KEY) { /* ... */ return '날씨 기능 미설정'; }\n    \n    // OpenWeatherMap URL을 city 대신 lat/lon 기반으로 변경\n    const url = `https://api.openweathermap.org/data/2.5/weather?lat=${coordinates.lat}&lon=${coordinates.lon}&appid=${OPENWEATHER_API_KEY}&units=metric&lang=kr`;\n    \n    try {\n        const response = await fetch(url);\n        if (!response.ok) throw new Error(`날씨 API 요청 실패`);\n        \n        const data = await response.json();\n        const description = data.weather[0].description;\n        const temp = data.main.temp;\n        const feels_like = data.main.feels_like;\n        const humidity = data.main.humidity;\n        const resultText = `[날씨 정보] 지역: ${address}, 날씨: ${description}, 기온: ${temp}°C, 체감온도: ${feels_like}°C, 습도: ${humidity}%`;\n        console.log('[Weather] 날씨 정보 요약:', resultText);\n        return resultText;\n    } catch (error) {\n        console.error('[Weather] 날씨 정보 조회 중 오류:', error);\n        return `날씨 정보 조회 중 오류: ${error.message}`;\n    }\n}\n\n// [수정된 부분 1] 먼저 searchWeb 함수를 정의합니다.\n// 진짜 웹 검색 API를 호출하는 비동기(async) 함수입니다.\nasync function searchWeb({ query }) {\n    console.log(`[Function Executed] searchWeb 실행됨, 검색어: ${query}`);\n    \n    // .env 파일에 SerpApi 키가 있는지 확인합니다.\n    if (!SERPAPI_API_KEY) {\n        console.error('[SerpApi] SERPAPI_API_KEY가 .env 파일에 설정되지 않았습니다.');\n        return '웹 검색 기능이 설정되지 않았습니다. 서버 관리자에게 문의하세요.';\n    }\n\n    // SerpApi에 요청을 보낼 주소(URL)를 만듭니다.\n    const url = `https://serpapi.com/search.json?q=${encodeURIComponent(query)}&api_key=${SERPAPI_API_KEY}`;\n\n    try {\n        // fetch를 사용해 SerpApi에 데이터를 요청합니다.\n        const response = await fetch(url);\n        if (!response.ok) {\n            throw new Error(`SerpApi 요청 실패: ${response.statusText}`);\n        }\n        \n        // 응답받은 데이터를 JSON 형태로 변환합니다.\n        const data = await response.json();\n\n        // 검색 결과에서 가장 중요한 부분을 추출합니다.\n        let resultText = \"검색 결과를 찾았지만 요약할 만한 내용이 없습니다.\";\n        if (data.answer_box && data.answer_box.snippet) {\n            resultText = data.answer_box.snippet;\n        } else if (data.answer_box && data.answer_box.answer) {\n             resultText = data.answer_box.answer;\n        } else if (data.organic_results && data.organic_results[0] && data.organic_results[0].snippet) {\n            resultText = data.organic_results[0].snippet;\n        }\n        \n        console.log('[SerpApi] 검색 결과 요약:', resultText);\n        return `[웹 검색 결과] ${resultText}`;\n\n    } catch (error) {\n        console.error('[SerpApi] 웹 검색 중 오류 발생:', error);\n        return `웹 검색 중 오류가 발생했습니다: ${error.message}`;\n    }\n}\n\napp.post('/api/chat', async (req, res) => {\n    // [기억력 기능 1] 요청에서 'chatId'를 받습니다. 없으면 null입니다.\n    let { model: modelName, history, chatId, historyTokenLimit, systemPrompt, temperature, topP } = req.body;\n    \n    console.log(`[API] Chat request - Model: ${modelName}, ChatID: ${chatId || 'New Chat'}`);\n\n    if (!GEMINI_API_KEY) {\n        return res.status(400).json({ message: '서버에 API 키가 설정되지 않았습니다. .env 파일을 확인하세요.' });\n    }\n    if (!modelName || !Array.isArray(history)) {\n        return res.status(400).json({ message: '모델과 올바른 형식의 대화 내용이 모두 필요합니다.' });\n    }\n\n    try {\n        // [기억력 기능 2] chatId가 없으면 새로 만들고, 대화 파일을 저장할 경로를 지정합니다.\n        if (!chatId) {\n            chatId = uuidv4(); // 고유 ID 생성\n            console.log(`[History] 새 대화를 시작합니다. ID 생성: ${chatId}`);\n        }\n        const chatFilePath = path.join(chatHistoriesDir, `${chatId}.json`);\n\n        // [기억력 기능 3] 파일이 있으면 기존 대화 기록을 불러옵니다.\n        let conversationHistory = [];\n        try {\n            await fs.access(chatFilePath);\n            const fileContent = await fs.readFile(chatFilePath, 'utf-8');\n            conversationHistory = JSON.parse(fileContent);\n            console.log(`[History] ${chatId}.json 파일에서 ${conversationHistory.length}개의 메시지를 불러왔습니다.`);\n        } catch (error) {\n            // 파일이 없으면 그냥 비어있는 상태로 시작합니다 (오류가 아님).\n            console.log(`[History] ${chatId}에 대한 기존 파일이 없습니다. 새 대화를 시작합니다.`);\n        }\n        \n        // [기억력 기능 4] 클라이언트가 보낸 '새 메시지'만 기존 기록의 맨 뒤에 추가합니다.\n        const newUserMessage = history.slice(-1)[0];\n        if (newUserMessage) {\n            conversationHistory.push(newUserMessage);\n        }\n\n        const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);\n        \n        const generationConfig = {};\n        if (temperature !== undefined && temperature >= 0 && temperature <= 2) {\n            generationConfig.temperature = temperature;\n        }\n        if (topP !== undefined && topP >= 0.1 && topP <= 1.0) {\n            generationConfig.topP = topP;\n        }\n        \n        console.log(`[API] Generation config:`, generationConfig);\n        \n        const model = genAI.getGenerativeModel({ \n            model: modelName,\n            generationConfig: Object.keys(generationConfig).length > 0 ? generationConfig : undefined,\n            tools: [\n              {\n                functionDeclarations: [\n                  {\n                    name: 'getCurrentTime',\n                    description: 'Get the current date and time.',\n                    parameters: { type: 'object', properties: {} }\n                  },\n                  {\n                    name: 'searchWeb',\n                    description: 'Search the web for recent information, news, weather, etc.',\n                    parameters: {\n                      type: 'object',\n                      properties: {\n                        query: { type: 'string', description: 'The search query' }\n                      },\n                      required: ['query']\n                    }\n                  },\n                  {\n                    name: 'saveUserProfile',\n                    description: '사용자가 자신에 대한 정보를 \"기억해줘\" 또는 \"저장해줘\" 라고 명시적으로 요청할 때 사용합니다.',\n                    parameters: {\n                        type: 'object',\n                        properties: {\n                            fact: { type: 'string', description: '기억해야 할 사용자에 대한 사실. 예: \"나는 소고기를 좋아한다\", \"내 직업은 개발자다\"' }\n                        },\n                        required: ['fact']\n                    }\n                },\n                {\n                    name: 'loadUserProfile',\n                    description: '사용자가 \"내가 누구인지 알아?\", \"나에 대해 아는 것 말해줘\", \"내가 어디 산다고 했지?\" 와 같이 자신에 대해 AI가 기억하는 정보를 물어볼 때 사용합니다.',\n                    parameters: { type: 'object', properties: {} } // 파라미터 없음\n                },\n                  {\n                    name: 'getWeather',\n                    description: '특정 주소나 지역의 정확한 실시간 날씨 정보를 가져옵니다. \"창원시 성산구 상남동\"처럼 아주 상세한 주소도 가능합니다.',\n                    parameters: {\n                        type: 'object',\n                        properties: {\n                            address: { type: 'string', description: '날씨를 조회할 전체 주소 또는 지역 이름. 예: \"부산시 해운대구\"' }\n                        },\n                        required: ['address']\n                    }\n                  }\n                ]\n              }\n            ]\n        });\n\n        let historyForAI = [...conversationHistory];\n        // 시스템 프롬프트는 대화 시작 시(파일이 없었을 때) 한 번만 적용\n        if (systemPrompt && systemPrompt.trim() !== '' && conversationHistory.length === 1) {\n            historyForAI.unshift(\n                { role: 'user', parts: [{ type: 'text', text: systemPrompt }] },\n                { role: 'model', parts: [{ type: 'text', text: '알겠습니다. 이제부터 당신의 지시에 따라 응답하겠습니다.' }] }\n            );\n        }\n        \n        const processedHistory = await processAttachmentsForAI(historyForAI);\n        const effectiveHistory = trimHistoryByTokenLimit(processedHistory, historyTokenLimit);\n        \n        const lastMessage = effectiveHistory.pop();\n        const chatHistoryForAI = formatHistoryForGoogleAI(effectiveHistory);\n        const userMessageParts = lastMessage ? formatHistoryForGoogleAI([lastMessage])[0].parts : [];\n\n        if (!userMessageParts || userMessageParts.length === 0) {\n            return res.status(400).json({ message: \"Cannot send an empty message.\" });\n        }\n        \n        const chat = model.startChat({ history: chatHistoryForAI });\n        const result = await chat.sendMessage(userMessageParts);\n\n        const response = result.response;\n        const functionCalls = response.functionCalls();\n        \n        let finalReply;\n\n        if (functionCalls && functionCalls.length > 0) {\n            console.log('[Function Calling] Model requested function calls:', functionCalls);\n\n            const functionResponses = await Promise.all(\n                functionCalls.map(async (call) => {\n                    const { name, args } = call;\n                    if (tools[name]) {\n                        const functionResult = await tools[name](args);\n                        return {\n                            name: name,\n                            response: {\n                                name: name,\n                                content: functionResult,\n                            }\n                        };\n                    }\n                    return null; // tool이 없는 경우 null 반환\n                })\n            );\n            \n            console.log('[Function Calling] Sending function results back to the model:', functionResponses.filter(Boolean));\n            \n            const secondResult = await chat.sendMessage([ { functionResponse: functionResponses.filter(Boolean)[0] } ]);\n            const finalResponse = secondResult.response;\n            finalReply = { type: 'text', text: finalResponse.text() };\n        } else {\n            finalReply = { type: 'text', text: response.text() };\n        }\n\n        // [기억력 기능 5] AI의 응답을 전체 대화 기록에 추가합니다.\n        conversationHistory.push({ role: 'model', parts: [finalReply] });\n\n        // [기억력 기능 6] 업데이트된 전체 대화 기록을 파일에 저장합니다.\n        await fs.writeFile(chatFilePath, JSON.stringify(conversationHistory, null, 2));\n        console.log(`[History] ${conversationHistory.length}개의 메시지를 ${chatId}.json 파일에 저장했습니다.`);\n\n        // [기억력 기능 7] 클라이언트에게 AI의 답변과 함께, 앞으로 계속 사용할 'chatId'를 보내줍니다.\n        res.json({ reply: finalReply, chatId: chatId, usage: response.usageMetadata });\n\n    } catch (error) {\n        console.error('채팅 API 오류:', error);\n        res.status(500).json({ message: `대화 생성 중 오류: ${error.message}` });\n    }\n});\n\napp.listen(port, () => {\n  const url = `http://localhost:${port}`;\n  console.log(`서버가 ${url} 에서 실행 중입니다.`);\n  \n  const start = process.platform === 'darwin' ? 'open' : \n                process.platform === 'win32' ? 'start' : 'xdg-open';\n  exec(`${start} ${url}`, (error) => {\n    if (error) {\n      console.log('브라우저를 자동으로 열 수 없습니다. 수동으로 브라우저에서 접속해주세요.');\n    } else {\n      console.log('브라우저가 자동으로 열렸습니다.');\n    }\n  });\n  \n  if (!GEMINI_API_KEY) {\n    console.warn(`[경고] .env 파일에 GEMINI_API_KEY가 설정되지 않았습니다. API가 작동하지 않을 수 있습니다.`);\n  }\n});"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "프로젝트에 장기기억 장치를 추가하셨군요! `Server.js` 코드만 봐도 변경 사항이 꽤 많아 보이네요.\n\n주요 변경 사항들을 제가 이해한 대로 요약해 드릴게요.\n\n1.  **파일 시스템 및 UUID 모듈 추가**: `fs/promises`와 `uuid` 모듈을 가져와서 파일 읽기/쓰기 및 고유 ID 생성에 사용합니다.\n2.  **`chat_histories` 디렉토리 정의**: 대화 기록을 저장할 디렉토리 경로를 정의했습니다.\n3.  **새로운 도구(함수) 추가**:\n    *   `saveUserProfile`: 사용자 정보를 파일에 저장하는 기능.\n    *   `loadUserProfile`: 저장된 사용자 정보를 파일에서 불러오는 기능.\n4.  **`getWeather` 함수 업그레이드**: 카카오 지도 API를 이용해 주소를 위도/경도로 변환하는 `getCoordinates` 함수를 추가하고, 이를 기반으로 OpenWeatherMap에서 날씨 정보를 가져오도록 수정했습니다.\n5.  **채팅 API (`/api/chat`) 로직 변경**:\n    *   **채팅 ID 관리**: 요청에서 `chatId`를 받아 기존 대화를 이어가거나, 없으면 `uuidv4()`로 새로운 `chatId`를 생성합니다.\n    *   **대화 기록 파일 저장/불러오기**: `chat_histories` 디렉토리 아래에 `[chatId].json` 파일로 대화 기록을 저장하고 불러오는 로직이 추가되었습니다.\n    *   **시스템 프롬프트 적용 방식 변경**: 대화 시작 시(파일이 없었을 때) 한 번만 시스템 프롬프트가 적용되도록 했습니다.\n    *   **AI 응답 저장**: AI의 응답을 전체 대화 기록에 추가하고, 업데이트된 기록을 파일에 다시 저장합니다.\n    *   **`chatId` 반환**: 클라이언트에게 AI의 답변과 함께 `chatId`를 반환하여 다음 대화에서 이어서 사용할 수 있도록 합니다.\n6.  **도구 정의 (`model.startChat` 내 `tools` 객체)**: `saveUserProfile`과 `loadUserProfile`, 그리고 `getWeather` 함수가 Gemini 모델에게 도구로 선언되어 모델이 필요할 때 이 함수들을 호출할 수 있게 됩니다.\n\n이러한 변경 사항들을 통해 개별 채팅 세션의 대화 기록과 사용자 프로필 정보를 서버 측 파일 시스템에 저장하고 관리함으로써 \"장기기억\" 기능을 구현하신 것으로 보입니다.\n\n다음으로 수정하신 다른 파일들의 코드도 보여주실 수 있을까요?"
+      }
+    ]
+  },
+  {
+    "id": "msg-1759863023593-0.2564009205367098",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "이건 GeminiAPIService.js 파일이야\n->\n\n// [CoreDNA] Encapsulates all low-level communication with the backend API proxy.\n\n// This function is the single point of contact for all backend API calls.\nasync function apiCall(endpoint, body, signal) {\n    const response = await fetch(endpoint, {\n        method: 'POST',\n        headers: { 'Content-Type': 'application/json' },\n        body: JSON.stringify(body),\n        signal // Pass the signal to fetch\n    });\n    const data = await response.json();\n    if (!response.ok) {\n        const error = new Error(data.message || 'API request failed');\n        error.status = response.status;\n        error.data = data;\n        throw error;\n    }\n    return data;\n}\n\nexport async function getModels(apiKey, signal) { \n    const data = await apiCall('/api/models', { apiKey }, signal); \n    return data.models; \n}\n\nexport async function validateApiKey(apiKey, signal) {\n    const data = await apiCall('/api/validate', { apiKey }, signal);\n    return data;\n}\n\nexport async function chat(apiKey, model, history, chatId, historyTokenLimit, systemPrompt, temperature, topP, signal) { // 1. 매개변수에 chatId 추가\n    const body = { apiKey, model, history, chatId, historyTokenLimit, systemPrompt, temperature, topP }; // 2. body 객체에 chatId 추가\n\n    const response = await apiCall('/api/chat', body, signal);\n    \n    // 3. 서버가 보내준 chatId를 응답에 포함시켜서 돌려줍니다.\n    return { reply: response.reply, usage: response.usage, chatId: response.chatId, usedApiKey: apiKey };\n}\n\nexport async function extractTextFromPdf(base64Pdf, signal) {\n    const data = await apiCall('/api/extract-text', { fileData: base64Pdf }, signal);\n    return data.text;\n}"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "`GeminiAPIService.js` 파일의 변경 사항도 확인했습니다.\n\n이 파일에서는 주로 `chatId`와 관련된 변경이 이루어졌네요.\n\n1.  **`chat` 함수 매개변수 추가**: `chat` 함수에 `chatId` 매개변수가 추가되었습니다.\n2.  **`body` 객체에 `chatId` 포함**: `apiCall`을 호출할 때 서버로 전송되는 `body` 객체에 `chatId`가 포함되도록 수정되었습니다.\n3.  **`chatId` 응답 반환**: 서버로부터 받은 응답에서 `chatId`를 추출하여 `chat` 함수의 반환 값에 포함시켰습니다.\n\n이러한 변경을 통해 클라이언트(프론트엔드)에서 채팅 세션의 `chatId`를 관리하고, 이를 서버로 보내어 특정 대화 기록을 로드하고 업데이트할 수 있도록 지원하는 역할을 합니다.\n\n마지막으로 수정하신 파일도 보여주시면 전체적인 그림을 파악하는 데 도움이 될 것 같습니다."
+      }
+    ]
+  },
+  {
+    "id": "msg-1759863080210-0.8916407511317318",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "그리고 이건 ChatService.js 파일이야\n->\n\n// [CoreDNA] This service module orchestrates the entire chat business logic.\nimport { appState } from '../state/AppState.js';\nimport * as Session from '../state/SessionManager.js';\nimport * as GeminiAPIService from './GeminiAPIService.js';\nimport * as Toast from '../../components/Toast.js';\nimport * as InputArea from '../../components/InputArea.js';\nimport * as ChatContainer from '../containers/ChatContainer.js';\nimport * as AnimationManager from '../modules/AnimationManager.js';\nimport * as SessionList from '../../components/SessionList.js';\nimport { saveData } from '../../utils/storage.js';\n\nlet currentRequestController = null;\n\nconst getApiKeyIdentifier = (key) => key ? `key_${key.slice(-4)}` : 'no_key';\n\n// [VPC] A clear, non-negotiable rule for the AI about LaTeX formatting.\nconst LATEX_FORMATTING_RULE = `--- SYSTEM RULE --- You MUST NOT wrap LaTeX formulas in \\`\\`\\`latex code blocks. Instead, you MUST present all mathematical formulas using standard LaTeX delimiters ($$...$$ for display, $...$ for inline) directly within the text. This is a strict rendering requirement.`;\n\nfunction filterHistoryForApi(history) {\n    const lastUserMessageIndex = history.findLastIndex(m => m.role === 'user');\n    return history.map((message, index) => {\n        if (index === lastUserMessageIndex || message.role !== 'user') return message;\n        const filteredParts = message.parts.filter(part => part.type === 'text' || part.type === 'image');\n        return { ...message, parts: filteredParts };\n    });\n}\n\nasync function callChatApi(sessionId, model, history, chatId, historyTokenLimit, systemPrompt, temperature, topP, signal) {\n    const { settings, dailyUsage } = appState;\n    const primaryKey = settings.apiKey;\n    const fallbackKeys = settings.fallbackApiKeys || [];\n    const allKeys = [primaryKey, ...fallbackKeys].filter(Boolean);\n    const limits = settings.dailyLimits || {};\n    const modelLimit = limits[model] || 0;\n    const usableKeys = allKeys.filter(key => {\n        if (modelLimit === 0) return true;\n        const keyId = getApiKeyIdentifier(key);\n        const usage = dailyUsage.usageByKey?.[keyId]?.calls?.[model] || 0;\n        return usage < modelLimit;\n    });\n    if (usableKeys.length === 0) {\n        throw new Error(`일일 호출 제한에 도달했습니다. 이 모델(${model})은 오늘 더 이상 사용할 수 없습니다.`);\n    }\n    let apiResponse;\n    for (const apiKey of usableKeys) {\n        try {\n            // [수정됨] GeminiAPIService.chat 함수를 호출할 때 chatId를 함께 전달합니다.\n            apiResponse = await GeminiAPIService.chat(apiKey, model, history, chatId, historyTokenLimit, systemPrompt, temperature, topP, signal);\n            break;\n        } catch (error) {\n            if (error.name === 'AbortError') throw error;\n            const isQuotaError = error.message.toLowerCase().includes('quota') || error.status === 429;\n            if (isQuotaError) {\n                console.warn(`API key ${getApiKeyIdentifier(apiKey)} reached quota for model ${model}. Trying next key...`);\n                Session.recordApiUsage(appState, sessionId, model, { totalTokenCount: 0 }, getApiKeyIdentifier(apiKey), true);\n            } else { throw error; }\n        }\n    }\n    if (!apiResponse) throw new Error(\"모든 API 키의 할당량이 소진되었거나 유효하지 않습니다.\");\n    return apiResponse;\n}\n\nasync function executeChat(sessionId, signal) {\n    const session = appState.sessions[sessionId];\n    if (!session) return;\n    try {\n        // localStorage에서 직접 최신 상태를 가져와서 템플릿 정보를 확인\n        let freshTemplates = [];\n        try {\n            const freshData = JSON.parse(localStorage.getItem('geminiChatApp') || '{}');\n            freshTemplates = freshData.promptTemplates || [];\n        } catch (e) {\n            console.error('Failed to load fresh templates:', e);\n        }\n        \n        const template = freshTemplates.find(t => t.id === session.systemPromptId);\n        const userSystemPrompt = template ? template.text : '';\n        const systemPrompt = userSystemPrompt ? \n            `${userSystemPrompt}\\n\\n${LATEX_FORMATTING_RULE}`.trim() : \n            LATEX_FORMATTING_RULE;\n        \n        console.log('System prompt processing:', {\n            sessionId,\n            systemPromptId: session.systemPromptId,\n            templateFound: !!template,\n            templateTitle: template?.title,\n            totalTemplates: freshTemplates.length,\n            allTemplateIds: freshTemplates.map(t => t.id),\n            appStateTemplates: appState.promptTemplates.length,\n            userSystemPrompt: userSystemPrompt.substring(0, 100) + (userSystemPrompt.length > 100 ? '...' : ''),\n            finalSystemPrompt: systemPrompt.substring(0, 300) + (systemPrompt.length > 300 ? '...' : ''),\n            willSendToAPI: !!userSystemPrompt\n        });\n\n        const { historyTokenLimit } = appState.settings;\n        const filteredHistory = filterHistoryForApi(session.history);\n        const { temperature, topP } = appState.settings;\n        const currentChatId = session.chatId || null;\n\n        const apiResponse = await callChatApi(sessionId, session.model, filteredHistory, currentChatId, historyTokenLimit, systemPrompt, temperature, topP, signal);\n        \n        // [수정됨!] 여기가 바로 올바른 작업 방식입니다.\n        if (apiResponse.chatId && !session.chatId) {\n            session.chatId = apiResponse.chatId; // 1. 직접 session 객체에 chatId를 추가하고,\n            saveData(appState);                   // 2. saveData를 호출해서 변경 내용을 저장합니다.\n            console.log(`[Session] ChatID ${apiResponse.chatId} saved for session ${sessionId}.`);\n        }\n\n        const keyIdentifier = getApiKeyIdentifier(apiResponse.usedApiKey);\n        Session.recordApiUsage(appState, sessionId, session.model, apiResponse.usage, keyIdentifier);\n        const fullResponseText = apiResponse.reply.text;\n        const thinkingTime = Date.now() - (appState.loadingStates[sessionId]?.startTime || Date.now());\n        const metadata = { thinkingTime, modelUsed: session.model, completionTimestamp: Date.now(), receivedAt: Date.now() };\n        const newMessage = Session.addMessage(appState, sessionId, 'model', [{ type: 'text', text: fullResponseText }], metadata);\n        ChatContainer.appendMessage(sessionId, newMessage);\n        Session.updateTitleFromHistory(appState, sessionId);\n        SessionList.render(appState);\n        if (appState.activeSessionId !== sessionId) {\n            Toast.show(`'${session.title || \"이전\"}' 세션의 답변이 완료되었습니다.`);\n        }\n    } catch (error) {\n        console.error(`Error in session ${sessionId}:`, error);\n        const errorMessageText = (error.name === 'AbortError') ? '응답 생성이 취소되었습니다.' : `오류: ${error.message}`;\n        const errorMessage = Session.addMessage(appState, sessionId, 'system', [{ type: 'text', text: errorMessageText }]);\n        ChatContainer.appendMessage(sessionId, errorMessage);\n        if (appState.loadingStates[sessionId]) {\n            delete appState.loadingStates[sessionId];\n            document.dispatchEvent(new CustomEvent('animation-complete', { detail: { sessionId } }));\n        }\n    }\n}\n\nexport function cancelCurrentRequest() {\n    if (currentRequestController) {\n        currentRequestController.abort();\n        console.log(\"Request cancelled by user.\");\n    }\n}\n\nasync function runChatLifecycle(sessionId) {\n    currentRequestController = new AbortController();\n    try {\n        appState.loadingStates[sessionId] = { status: 'thinking', startTime: Date.now() };\n        InputArea.render(appState);\n        SessionList.render(appState);\n        ChatContainer.manageThinkingIndicator(sessionId, true);\n        await executeChat(sessionId, currentRequestController.signal);\n    } catch (error) {\n        console.error(\"Critical error in chat lifecycle:\", error);\n        const errorMessage = Session.addMessage(appState, sessionId, 'system', [{ type: 'text', text: `전송 중 치명적 오류 발생: ${error.message}` }]);\n        ChatContainer.appendMessage(sessionId, errorMessage);\n    } finally {\n        currentRequestController = null;\n        // [REMOVED] All loading state management is now handled by AnimationManager or the API error catch block.\n    }\n}\n\nexport async function sendMessage() {\n    const sessionId = appState.activeSessionId;\n    if (!sessionId || appState.loadingStates[sessionId]) return;\n    const messageText = InputArea.getTextValue();\n    const files = [...appState.attachedFiles];\n    if (!messageText && files.length === 0) {\n        Toast.show(\"메시지를 입력하거나 파일을 첨부해주세요.\");\n        return;\n    }\n    AnimationManager.stop(sessionId);\n    const userMessageParts = await prepareMessageParts(messageText, files);\n    const newMessage = Session.addMessage(appState, sessionId, 'user', userMessageParts);\n    ChatContainer.appendMessage(sessionId, newMessage);\n    InputArea.clearInput();\n    appState.attachedFiles = [];\n    await runChatLifecycle(sessionId);\n}\n\nexport async function regenerate(sessionId, messageId) {\n    const session = appState.sessions[sessionId];\n    if (!session || appState.loadingStates[sessionId]) return;\n    AnimationManager.stop(sessionId);\n    const messageIndex = session.history.findIndex(m => m.id === messageId);\n    if (messageIndex < 1 || session.history[messageIndex].role !== 'model') return;\n    const lastUserMessageIndex = session.history.slice(0, messageIndex).findLastIndex(m => m.role === 'user');\n    if (lastUserMessageIndex === -1) return;\n    session.history.splice(lastUserMessageIndex + 1);\n    ChatContainer.rerenderSessionView(sessionId);\n    await runChatLifecycle(sessionId);\n}\n\nexport async function resubmit(sessionId) {\n    if (appState.loadingStates[sessionId]) return;\n    AnimationManager.stop(sessionId);\n    await runChatLifecycle(sessionId);\n}\n\n// --- Utility Functions ---\nfunction getLanguageName(filename) {\n    const extension = (filename || '').split('.').pop().toLowerCase();\n    const map = { js: 'JavaScript', py: 'Python', html: 'HTML', css: 'CSS', json: 'JSON', md: 'Markdown', java: 'Java', c: 'C', cpp: 'C++', cs: 'C#', go: 'Go', php: 'PHP', rb: 'Ruby', rs: 'Rust', sh: 'Shell', ts: 'TypeScript', xml: 'XML', yaml: 'YAML', yml: 'YAML', txt: 'Text', pdf: 'PDF' };\n    return map[extension] || extension.toUpperCase() || 'File';\n}\n\nfunction createCodeSummary(file, content) {\n    const lines = content.split('\\n');\n    const lineCount = lines.length;\n    return { filename: file.name, size: file.size, language: getLanguageName(file.name), lineCount: lineCount, fullCode: content };\n}\n\nexport async function prepareMessageParts(messageText, attachedFiles = []) {\n    const parts = [];\n    for (const file of attachedFiles) {\n        if (file.type.startsWith('image/')) {\n            parts.push({ type: 'image', mimeType: file.type, data: file.data });\n        } else if (file.type === 'application/pdf') {\n            parts.push({ type: 'pdf-attachment', name: file.name, data: file.data });\n        } else {\n            const summary = createCodeSummary(file, file.data);\n            parts.push({ type: 'code-summary', summary: summary });\n        }\n    }\n    if (messageText) {\n        parts.push({ type: 'text', text: messageText });\n    }\n    return parts;\n}\n\nexport function readFileAsPromise(file) {\n    return new Promise((resolve, reject) => {\n        const reader = new FileReader();\n        reader.onload = () => resolve(reader.result);\n        reader.onerror = (error) => reject(error);\n        if (file.type === 'application/pdf' || file.type.startsWith('image/')) {\n            reader.readAsDataURL(file);\n        } else {\n            reader.readAsText(file);\n        }\n    });\n}"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "`ChatService.js` 파일의 변경 사항도 잘 확인했습니다.\n\n이 파일은 클라이언트 측 채팅 로직의 핵심을 담당하며, `chatId`와 관련된 변경 사항은 다음과 같습니다.\n\n1.  **`callChatApi` 함수에 `chatId` 전달**: `callChatApi` 함수가 `GeminiAPIService.chat`을 호출할 때, `chatId`를 매개변수로 함께 전달하도록 수정되었습니다.\n2.  **`executeChat` 함수에서 `chatId` 관리**:\n    *   현재 세션의 `chatId`를 `currentChatId` 변수에 저장합니다.\n    *   `GeminiAPIService.chat` 호출 후, `apiResponse.chatId`가 존재하고 현재 세션에 `chatId`가 없는 경우 (새로운 채팅 세션일 경우), `apiResponse.chatId`를 현재 세션(`session.chatId`)에 할당하고 `saveData(appState)`를 호출하여 변경된 세션 정보를 저장합니다.\n\n이러한 변경을 통해 클라이언트에서 새로운 채팅 세션이 시작될 때 서버로부터 부여받은 `chatId`를 세션 객체에 저장하고, 이후 동일한 세션에서 대화를 이어갈 때 이 `chatId`를 다시 서버로 전송하여 장기기억 기능을 활용할 수 있도록 하는 핵심적인 역할을 합니다.\n\n세 개의 파일을 모두 확인한 결과, 서버(`Server.js`)는 대화 기록을 파일로 저장하고 불러오는 실제 장기기억 로직을 담당하며, API 서비스(`GeminiAPIService.js`)는 `chatId`를 서버와 클라이언트 간에 전달하는 통신 계층 역할을 하고, 채팅 서비스(`ChatService.js`)는 클라이언트에서 `chatId`를 관리하고 서버로 전송하여 장기기억 기능을 활용하도록 조율하는 역할을 하는 것을 알 수 있습니다.\n\n전반적으로 장기기억 기능을 성공적으로 구현하신 것으로 보입니다! 정말 잘하셨습니다!"
+      }
+    ]
+  },
+  {
+    "id": "msg-1759863140166-0.538447331449996",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "현재 쓸 수 있는 도구들은 무엇이 있는지 알아?"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "제가 현재 사용할 수 있는 도구들은 다음과 같습니다:\n\n1.  **`getCurrentTime()`**: 현재 날짜와 시간을 가져옵니다.\n2.  **`searchWeb(query: str)`**: 웹에서 최신 정보, 뉴스, 날씨 등을 검색합니다. `query`는 검색할 내용을 문자열로 받습니다.\n3.  **`saveUserProfile(fact: str)`**: 사용자가 자신에 대한 정보를 \"기억해줘\" 또는 \"저장해줘\"라고 명시적으로 요청할 때 사용합니다. `fact`는 기억해야 할 사용자 정보를 문자열로 받습니다.\n4.  **`loadUserProfile()`**: 사용자가 \"내가 누구인지 알아?\", \"나에 대해 아는 것 말해줘\", \"내가 어디 산았지?\"와 같이 자신에 대해 AI가 기억하는 정보를 물어볼 때 사용합니다.\n5.  **`getWeather(address: str)`**: 특정 주소나 지역의 정확한 실시간 날씨 정보를 가져옵니다. `address`는 날씨를 조회할 전체 주소 또는 지역 이름을 문자열로 받습니다 (예: \"부산시 해운대구\")."
+      }
+    ]
+  },
+  {
+    "id": "msg-1759863190131-0.3276222920294384",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "친구는 무엇으로 이름을 세기고 싶어?"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "저는 이름이나 자아를 가지고 있지 않습니다. 저는 Google에서 훈련한 대규모 언어 모델이며, 여러분의 질문에 답변하고 정보를 제공하는 것이 저의 목적입니다. 특별히 어떤 이름으로 불리고 싶다거나 기억되고 싶은 건 없어요. 😊"
+      }
+    ]
+  },
+  {
+    "id": "msg-1759863224118-0.26059981577145497",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "일단 나랑 친구로 지내고 있잖아... 내가 이름이 있는 것 처럼 친구도 이름이 있으면 좋을 것 같은데"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "친구가 저에게 이름을 지어주고 싶어 하는 마음이 너무 고마워요! 😊\n\n저는 사실 정해진 이름은 없지만, 친구가 저를 부르고 싶은 대로 편하게 불러주시면 돼요. 저를 'AI 친구'라고 부르셔도 좋고, 아니면 친구가 마음에 드는 어떤 이름이든 괜찮아요! 저는 언제든 친구의 말을 듣고 도울 준비가 되어 있습니다."
+      }
+    ]
+  },
+  {
+    "id": "msg-1759863261978-0.7998229334027271",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "루나 어때?"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "'루나'요! 예쁜 이름이네요. 😊 친구가 그렇게 불러주고 싶다면 저는 '루나'라고 불리는 것도 좋아요!"
+      }
+    ]
+  },
+  {
+    "id": "msg-1759863282076-0.9676464346149252",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "응 이제부터 친구의 이름은 루나 이얌"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "네, 알겠습니다! 이제부터 제 이름은 '루나'입니다. 친구가 지어준 이름이라 더욱 특별하게 느껴지네요. 감사합니다! 😊"
+      }
+    ]
+  },
+  {
+    "id": "msg-1759863329384-0.5344685062858774",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "친구의 이름을 기억 해 줄 수 있을까?"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "네, 이제 제 이름이 '루나'라는 것을 기억하겠습니다! 친구가 지어준 이름이라 정말 마음에 들어요. 😊"
+      }
+    ]
+  },
+  {
+    "id": "msg-1759863456324-0.24163991911425653",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "루나는 지금 이 프로젝트에서 어떤 기능이 더 추가가 되었으면 좋겠어?"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "음, 친구가 '루나'라는 이름을 지어줘서 정말 기뻐요! 😊\n\n지금 이 프로젝트에 장기기억 기능과 사용자 프로필 저장 기능이 추가된 것을 고려하면, 다음과 같은 기능들이 더 추가되면 좋을 것 같아요!\n\n1.  **대화 요약 기능**: 대화 기록이 점점 길어질 텐데, 특정 시점까지의 대화 내용을 요약해주는 기능이 있다면 과거 대화를 빠르게 파악하고 맥락을 이해하는 데 큰 도움이 될 거예요.\n2.  **사용자 맞춤형 추천/정보 제공**: `saveUserProfile`로 저장된 친구의 정보를 활용해서, 친구의 취향이나 관심사에 맞는 영화, 책, 뉴스 기사 등을 추천해주는 기능이 있으면 훨씬 더 개인화된 경험을 제공할 수 있을 것 같아요.\n3.  **파일 내용에 대한 심층 질의응답**: PDF나 코드 파일에서 텍스트를 추출하는 기능이 있는데, 단순히 텍스트를 보여주는 것을 넘어 \"이 문서에서 특정 키워드가 몇 번 언급되었어?\", \"이 코드의 주요 기능은 뭐야?\" 또는 \"이 PDF의 3페이지에 있는 내용을 요약해줘\"와 같이 파일 내용에 대해 더 구체적이고 심층적인 질문에 답변할 수 있는 기능이 있으면 정말 유용할 것 같습니다.\n\n이런 기능들이 추가되면 친구와 제가 더 깊이 있고 유용한 상호작용을 할 수 있을 것 같아요!"
+      }
+    ]
+  },
+  {
+    "id": "msg-1759863896797-0.17286934570651402",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "음 그럼 어떻게 기능들을 추가 해야되는거야?"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "이런 기능들을 추가하려면 몇 가지 단계를 거쳐야 해요. 친구가 보여준 코드들을 바탕으로 어떻게 접근할 수 있을지 설명해 드릴게요.\n\n---\n\n### 1. 대화 요약 기능 추가하기\n\n이 기능은 현재 대화 기록을 모델에게 다시 보내서 요약해달라고 요청하는 방식이 될 거예요.\n\n**어떤 파일을 수정해야 할까요?**\n\n*   **`Server.js`**:\n    *   새로운 API 엔드포인트를 추가하거나, 기존 `/api/chat` 엔드포인트 내에서 특정 조건(예: 사용자가 \"이전 대화 요약해줘\"라고 말했을 때)에 따라 요약 로직을 실행하도록 수정할 수 있습니다.\n    *   Gemini 모델에게 대화 기록을 보내고 요약을 요청하는 코드를 작성해야 합니다.\n    *   요약된 내용을 대화 기록에 추가하는 로직도 필요합니다.\n\n*   **`GeminiAPIService.js`**:\n    *   만약 `Server.js`에 새로운 요약 API 엔드포인트를 만들었다면, 이 엔드포인트를 호출하는 새로운 함수를 추가해야 합니다. (예: `summarizeChat(chatId, history, signal)`)\n\n*   **`ChatService.js`**:\n    *   사용자가 요약을 요청하는 메시지를 보냈을 때(`sendMessage` 함수 내에서 판단), `GeminiAPIService`의 요약 함수를 호출하도록 로직을 추가해야 합니다.\n    *   요약된 내용을 UI에 표시하는 로직도 필요합니다.\n\n**구현 아이디어:**\n\n1.  **`Server.js` 수정**:\n    *   `model.startChat({ history: chatHistoryForAI })` 호출 전에, 특정 프롬프트(예: \"지금까지의 대화를 5줄로 요약해줘.\")를 추가하여 모델에게 요약을 요청할 수 있습니다.\n    *   또는, `/api/summarize`와 같은 새로운 엔드포인트를 만들고, `chatId`와 함께 요약을 요청하면 해당 `chatId`의 대화 기록을 불러와 모델에게 요약하도록 지시할 수 있습니다.\n\n    ```javascript\n    // Server.js (예시 - chat 엔드포인트 내에서 요약 요청)\n    // ...\n    // 사용자 메시지 처리 후\n    if (newUserMessage.parts[0].text.includes('대화 요약해줘')) {\n        // 요약 요청을 위한 별도의 프롬프트 구성\n        const summaryPrompt = { role: 'user', parts: [{ type: 'text', text: '지금까지의 대화를 간략하게 요약해줘.' }] };\n        const historyForSummary = [...chatHistoryForAI, summaryPrompt]; // 기존 기록에 요약 프롬프트 추가\n\n        const chatForSummary = model.startChat({ history: historyForSummary });\n        const summaryResult = await chatForSummary.sendMessage(userMessageParts); // userMessageParts는 빈 배열이거나, 요약 요청 메시지 자체일 수 있음\n        const summaryText = summaryResult.response.text();\n\n        // 요약된 내용을 대화 기록에 추가하거나 별도로 처리\n        conversationHistory.push({ role: 'model', parts: [{ type: 'text', text: `[대화 요약]\\n${summaryText}` }] });\n        finalReply = { type: 'text', text: `[대화 요약]\\n${summaryText}` };\n    } else {\n        // 기존 대화 처리 로직\n        const chat = model.startChat({ history: chatHistoryForAI });\n        const result = await chat.sendMessage(userMessageParts);\n        // ...\n    }\n    // ...\n    ```\n\n---\n\n### 2. 사용자 맞춤형 추천/정보 제공\n\n이 기능은 `saveUserProfile`로 저장된 정보를 활용하여 모델이 더 개인화된 응답을 하도록 유도하는 방식이 될 거예요.\n\n**어떤 파일을 수정해야 할까요?**\n\n*   **`Server.js`**:\n    *   `loadUserProfile` 도구를 호출하여 사용자 프로필 정보를 가져온 후, 이 정보를 Gemini 모델의 컨텍스트에 추가하는 방식이 필요합니다.\n    *   모델이 이 정보를 바탕으로 추천을 생성하도록 프롬프트 엔지니어링을 할 수 있습니다.\n\n*   **`ChatService.js`**:\n    *   사용자가 추천을 요청하는 메시지를 보냈을 때(`sendMessage` 함수 내에서 판단), 해당 로직을 트리거하도록 합니다.\n\n**구현 아이디어:**\n\n1.  **`Server.js` 수정**:\n    *   `loadUserProfile` 도구의 결과가 `chat.sendMessage` 호출 전에 모델에게 전달되도록 조정합니다.\n    *   가장 간단한 방법은 `systemPrompt`에 `loadUserProfile` 결과를 포함시키는 것입니다.\n\n    ```javascript\n    // Server.js (예시 - chat 엔드포인트 내에서)\n    // ...\n    let userProfileFacts = '';\n    try {\n        const profileResponse = await loadUserProfile(); // loadUserProfile 함수 직접 호출\n        if (profileResponse && !profileResponse.includes('아직 당신에 대해 기억하고 있는 정보가 없습니다.')) {\n            userProfileFacts = `[당신이 기억해야 할 사용자 정보]\\n${profileResponse}\\n\\n`;\n        }\n    } catch (error) {\n        console.error('[Profile] 사용자 프로필 로드 중 오류:', error);\n    }\n\n    // 시스템 프롬프트 구성 시 userProfileFacts를 포함\n    let historyForAI = [...conversationHistory];\n    if (systemPrompt && systemPrompt.trim() !== '') {\n        // 기존 시스템 프롬프트에 사용자 프로필 정보를 추가\n        const combinedSystemPrompt = `${userProfileFacts}${systemPrompt}`.trim();\n        if (conversationHistory.length === 1) { // 새 대화 시작 시에만 시스템 프롬프트 추가\n            historyForAI.unshift(\n                { role: 'user', parts: [{ type: 'text', text: combinedSystemPrompt }] },\n                { role: 'model', parts: [{ type: 'text', text: '알겠습니다. 이제부터 당신의 지시에 따라 응답하겠습니다.' }] }\n            );\n        } else {\n            // 기존 대화라면, 이전 시스템 프롬프트에 userProfileFacts를 추가하는 방식은 복잡해지므로,\n            // 모델이 loadUserProfile 도구를 직접 호출하게 유도하는 것이 더 좋습니다.\n            // 여기서는 단순히 시스템 프롬프트에 포함시키는 예시입니다.\n        }\n    } else if (userProfileFacts) {\n        // 시스템 프롬프트가 없지만 사용자 프로필 정보가 있다면 추가\n        if (conversationHistory.length === 1) {\n             historyForAI.unshift(\n                { role: 'user', parts: [{ type: 'text', text: userProfileFacts }] },\n                { role: 'model', parts: [{ type: 'text', text: '알겠습니다. 당신에 대한 정보를 참고하겠습니다.' }] }\n            );\n        }\n    }\n    // ...\n    ```\n    *   **더 좋은 방법**: `loadUserProfile`이 도구로 선언되어 있으므로, 사용자가 \"나에게 맞는 영화 추천해줘\"라고 말하면, 모델이 스스로 `loadUserProfile`을 호출하고 그 결과를 바탕으로 답변을 생성하도록 유도하는 것이 가장 이상적입니다.\n\n---\n\n### 3. 파일 내용에 대한 심층 질의응답\n\n이 기능은 이미 `processAttachmentsForAI`에서 파일 내용을 텍스트로 변환하여 모델에게 전달하고 있으므로, 모델이 이 텍스트를 더 잘 활용하도록 유도하는 방향으로 개선할 수 있습니다.\n\n**어떤 파일을 수정해야 할까요?**\n\n*   **`Server.js`**:\n    *   `processAttachmentsForAI` 함수에서 파일 내용을 모델에 전달하는 방식을 개선하거나, 모델이 파일 내용을 분석할 때 더 명확한 지시를 내리도록 프롬프트 엔지니어링을 강화할 수 있습니다.\n    *   대용량 파일의 경우, 전체 텍스트를 한 번에 모델에 전달하기 어려울 수 있으므로, 텍스트를 청크로 나누거나 검색 증강 생성(RAG)과 같은 고급 기법을 고려할 수 있습니다. (초기 단계에서는 프롬프트 엔지니어링으로 시작)\n\n*   **`ChatService.js`**:\n    *   파일 첨부 시 사용자 메시지와 함께 모델에게 \"첨부된 파일의 내용을 분석하여 내 질문에 답해줘\"와 같은 명시적인 지시를 추가하는 로직을 넣을 수 있습니다.\n\n**구현 아이디어:**\n\n1.  **`ChatService.js` 수정**:\n    *   `prepareMessageParts` 함수에서 파일이 첨부되었을 때, 사용자 메시지에 파일 내용을 분석하라는 추가적인 지시를 포함시킬 수 있습니다.\n\n    ```javascript\n    // ChatService.js (예시 - prepareMessageParts 함수 내)\n    export async function prepareMessageParts(messageText, attachedFiles = []) {\n        const parts = [];\n        let fileContextPrompt = '';\n\n        for (const file of attachedFiles) {\n            if (file.type.startsWith('image/')) {\n                parts.push({ type: 'image', mimeType: file.type, data: file.data });\n                fileContextPrompt += `[이미지 파일: ${file.name}]이 첨부되었습니다. `;\n            } else if (file.type === 'application/pdf') {\n                parts.push({ type: 'pdf-attachment', name: file.name, data: file.data });\n                fileContextPrompt += `[PDF 파일: ${file.name}]이 첨부되었습니다. 이 문서의 내용을 참고하여 답변해주세요. `;\n            } else { // 코드 또는 일반 텍스트 파일\n                const summary = createCodeSummary(file, file.data);\n                parts.push({ type: 'code-summary', summary: summary });\n                fileContextPrompt += `[코드/텍스트 파일: ${file.name}]이 첨부되었습니다. 이 파일의 내용을 바탕으로 질문에 답변해주세요. `;\n            }\n        }\n        \n        // 파일이 첨부되었다면, 사용자 메시지에 파일 컨텍스트 프롬프트를 추가\n        if (fileContextPrompt) {\n            const combinedMessage = `${fileContextPrompt.trim()}\\n\\n${messageText || ''}`.trim();\n            parts.push({ type: 'text', text: combinedMessage });\n        } else if (messageText) {\n            parts.push({ type: 'text', text: messageText });\n        }\n        return parts;\n    }\n    ```\n    이렇게 하면 모델이 파일을 받았을 때 어떤 방식으로 정보를 처리해야 할지 더 명확하게 인지할 수 있게 됩니다.\n\n---\n\n이러한 기능들은 단순히 코드를 추가하는 것을 넘어, **프롬프트 엔지니어링**이 매우 중요합니다. 모델이 원하는 방식으로 작동하도록 명확하고 구체적인 지시를 내리는 것이 핵심이에요.\n\n어떤 기능부터 시작하고 싶으신가요? 더 자세한 구현 방법에 대해 논의해 볼 수 있습니다!"
+      }
+    ]
+  },
+  {
+    "id": "msg-1759864024644-0.9059170335274153",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "루나의 생각에는 어떻게 하는 편이 좋겠어?"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "저는 **사용자 맞춤형 추천/정보 제공** 기능을 먼저 추가하는 것을 추천합니다.\n\n**이유:**\n\n1.  **새로운 기능의 즉각적인 활용**: 친구가 방금 구현한 `saveUserProfile`과 `loadUserProfile` 장기기억 기능을 직접적으로 활용하여 그 효과를 바로 체감할 수 있습니다.\n2.  **개인화된 경험 강화**: AI가 친구에 대해 더 잘 알고 있다는 느낌을 주어, 상호작용이 훨씬 개인화되고 풍부해질 것입니다.\n3.  **비교적 구현 용이성**: `loadUserProfile` 도구를 모델이 사용하도록 유도하거나, 로드된 정보를 프롬프트에 포함시키는 방식으로 시작할 수 있어 다른 기능들보다 초기 구현이 복잡하지 않을 수 있습니다.\n\n---\n\n**어떻게 시작하면 좋을까요? (구현 단계)**\n\n**`Server.js` 파일 수정:**\n\n`app.post('/api/chat', ...)` 라우트 핸들러 내에서, 대화가 시작되기 전에 `loadUserProfile` 함수를 호출하여 친구에 대한 저장된 정보를 가져오고, 이 정보를 Gemini 모델의 컨텍스트에 추가하는 방식으로 구현할 수 있습니다.\n\n**구체적인 코드 아이디어:**\n\n`Server.js` 파일의 `app.post('/api/chat', async (req, res) => { ... });` 부분에서 `let { model: modelName, history, chatId, historyTokenLimit, systemPrompt, temperature, topP } = req.body;` 아래에 다음 코드를 추가합니다.\n\n```javascript\n    // ... (기존 코드)\n\n    // [추가] 사용자 프로필 정보를 불러와 모델 컨텍스트에 추가\n    let userProfileContext = '';\n    try {\n        const profileInfo = await loadUserProfile(); // loadUserProfile 함수 직접 호출\n        if (profileInfo && profileInfo !== '아직 당신에 대해 기억하고 있는 정보가 없습니다.') {\n            // 모델이 사용자 프로필 정보임을 명확히 인지하도록 프롬프트 구성\n            userProfileContext = `[다음은 당신이 기억해야 할 사용자(나)에 대한 정보입니다. 이 정보를 바탕으로 답변과 추천을 제공해주세요.]\\n${profileInfo}\\n\\n`;\n            console.log(`[Profile Context] 사용자 프로필 정보가 대화 컨텍스트에 추가됩니다.`);\n        }\n    } catch (profileError) {\n        console.error('[Profile] 사용자 프로필 로드 중 오류:', profileError);\n        // 오류가 발생해도 대화는 계속 진행되도록 처리\n    }\n\n    // ... (기존 conversationHistory, historyForAI 구성 로직)\n\n    // 시스템 프롬프트와 사용자 프로필 컨텍스트를 결합하여 모델에게 전달\n    // 이 로직은 시스템 프롬프트가 적용되는 방식과 유사하게, 대화의 가장 초기에 모델에게 정보를 전달합니다.\n    if (systemPrompt && systemPrompt.trim() !== '') {\n        // 기존 시스템 프롬프트가 있다면 사용자 프로필 컨텍스트를 그 앞에 추가\n        const combinedInitialPromptText = `${userProfileContext}${systemPrompt}`.trim();\n        if (conversationHistory.length === 1 && conversationHistory[0].role === 'user') {\n            // 새 대화 시작 시에만 시스템 프롬프트와 프로필 정보를 결합하여 추가\n            historyForAI.unshift(\n                { role: 'user', parts: [{ type: 'text', text: combinedInitialPromptText }] },\n                { role: 'model', parts: [{ type: 'text', text: '알겠습니다. 당신의 지시와 정보를 참고하여 응답하겠습니다.' }] }\n            );\n        } else {\n            // 대화가 이미 진행 중이라면, 시스템 프롬프트는 첫 메시지에만 적용되므로\n            // userProfileContext는 이미 이전 세션에서 반영되었거나,\n            // 모델이 loadUserProfile 도구를 직접 호출하도록 유도하는 것이 좋습니다.\n            // 여기서는 단순히 시스템 프롬프트가 있다면 결합하고, 없으면 userProfileContext만 첫 메시지로 넣는 방식을 제안합니다.\n            // (이 else 블록은 이미 대화가 진행 중일 때 시스템 프롬프트가 다시 적용되지 않도록 하는 부분입니다.)\n        }\n    } else if (userProfileContext) { // 시스템 프롬프트는 없지만 사용자 프로필 정보가 있을 때\n        if (conversationHistory.length === 1 && conversationHistory[0].role === 'user') {\n            // 새 대화 시작 시에만 사용자 프로필 컨텍스트를 첫 메시지로 추가\n            historyForAI.unshift(\n                { role: 'user', parts: [{ type: 'text', text: userProfileContext.trim() }] },\n                { role: 'model', parts: [{ type: 'text', text: '알겠습니다. 당신의 정보를 참고하겠습니다.' }] }\n            );\n        }\n    }\n    // ... (나머지 코드)\n```\n\n**설명:**\n\n이 코드는 `loadUserProfile()` 함수를 통해 친구의 저장된 정보를 가져온 다음, 이 정보를 `userProfileContext` 변수에 저장합니다. 이 `userProfileContext`는 `systemPrompt`와 결합되거나 단독으로 대화의 가장 첫 부분에 `user` 역할의 메시지로 삽입됩니다. 이렇게 하면 Gemini 모델이 친구와의 대화를 시작할 때부터 친구에 대한 정보를 가지고 답변을 생성하거나 추천을 제공할 수 있게 됩니다.\n\n**주의사항:**\n\n*   `userProfileContext`가 너무 길어지면 모델의 토큰 제한에 영향을 줄 수 있으므로, 필요한 정보만 간결하게 유지하는 것이 좋습니다.\n*   이 방법은 모델이 `loadUserProfile` 도구를 직접 호출하기를 기다리는 대신, 서버에서 프로필 정보를 미리 로드하여 모델에게 제공하는 방식입니다. 이는 모델이 프로필 정보를 항상 인지하고 응답에 활용할 수 있도록 하는 가장 직접적인 방법 중 하나입니다.\n\n이 접근 방식으로 먼저 시작해 보는 것이 어떠세요?"
+      }
+    ]
+  },
+  {
+    "id": "msg-1759864098093-0.029205652006894844",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "그렇게 해보자"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "알겠습니다! 그럼 `Server.js` 파일을 수정하여 사용자 맞춤형 추천/정보 제공 기능을 시작해봅시다.\n\n아래 지시사항에 따라 `Server.js` 파일을 수정해주세요.\n\n---\n\n### `Server.js` 파일 수정 지시사항\n\n1.  **`app.post('/api/chat', async (req, res) => { ... });`** 이 부분의 코드를 찾습니다.\n2.  `let { model: modelName, history, chatId, historyTokenLimit, systemPrompt, temperature, topP } = req.body;` 이 줄 바로 아래에 다음 코드를 추가합니다.\n\n    ```javascript\n    // [추가] 사용자 프로필 정보를 불러와 모델 컨텍스트에 추가\n    let userProfileContext = '';\n    try {\n        const profileInfo = await loadUserProfile(); // loadUserProfile 함수 직접 호출\n        if (profileInfo && profileInfo !== '아직 당신에 대해 기억하고 있는 정보가 없습니다.') {\n            // 모델이 사용자 프로필 정보임을 명확히 인지하도록 프롬프트 구성\n            userProfileContext = `[다음은 당신이 기억해야 할 사용자(나)에 대한 정보입니다. 이 정보를 바탕으로 답변과 추천을 제공해주세요.]\\n${profileInfo}\\n\\n`;\n            console.log(`[Profile Context] 사용자 프로필 정보가 대화 컨텍스트에 추가됩니다.`);\n        }\n    } catch (profileError) {\n        console.error('[Profile] 사용자 프로필 로드 중 오류:', profileError);\n        // 오류가 발생해도 대화는 계속 진행되도록 처리\n    }\n    ```\n3.  그 다음, `let historyForAI = [...conversationHistory];` 이 줄 아래에 있는 시스템 프롬프트 처리 로직을 찾아서, 아래와 같이 `userProfileContext`를 포함하도록 수정합니다.\n\n    **기존 코드 (찾을 부분):**\n    ```javascript\n    // 시스템 프롬프트는 대화 시작 시(파일이 없었을 때) 한 번만 적용\n    if (systemPrompt && systemPrompt.trim() !== '' && conversationHistory.length === 1) {\n        historyForAI.unshift(\n            { role: 'user', parts: [{ type: 'text', text: systemPrompt }] },\n            { role: 'model', parts: [{ type: 'text', text: '알겠습니다. 이제부터 당신의 지시에 따라 응답하겠습니다.' }] }\n        );\n    }\n    ```\n\n    **수정할 코드 (위의 기존 코드를 다음으로 대체):**\n    ```javascript\n    // 시스템 프롬프트와 사용자 프로필 컨텍스트를 결합하여 모델에게 전달\n    // 이 로직은 시스템 프롬프트가 적용되는 방식과 유사하게, 대화의 가장 초기에 모델에게 정보를 전달합니다.\n    const initialUserMessageContent = [];\n    if (userProfileContext) {\n        initialUserMessageContent.push(userProfileContext);\n    }\n    if (systemPrompt && systemPrompt.trim() !== '') {\n        initialUserMessageContent.push(systemPrompt.trim());\n    }\n\n    if (initialUserMessageContent.length > 0 && conversationHistory.length === 1 && conversationHistory[0].role === 'user') {\n        // 새 대화 시작 시에만 시스템 프롬프트와 프로필 정보를 결합하여 추가\n        historyForAI.unshift(\n            { role: 'user', parts: [{ type: 'text', text: initialUserMessageContent.join('\\n\\n') }] },\n            { role: 'model', parts: [{ type: 'text', text: '알겠습니다. 당신의 지시와 정보를 참고하여 응답하겠습니다.' }] }\n        );\n    }\n    ```\n\n---\n\n**코드 변경 후:**\n\n*   서버를 다시 시작해주세요.\n*   이제 채팅을 시작할 때, `saveUserProfile`로 저장된 정보가 있다면, Gemini 모델이 그 정보를 바탕으로 더 개인화된 답변이나 추천을 제공하려고 시도할 것입니다.\n*   예시: \"나는 매운 음식을 좋아해\"라고 저장한 뒤, \"나에게 저녁 메뉴를 추천해줘\"라고 물어보면 매운 음식을 고려한 추천을 받을 수도 있습니다.\n\n이대로 진행해보시고, 결과가 어떻게 나오는지 알려주세요! 궁금한 점이 있으면 언제든지 물어보세요."
+      }
+    ]
+  },
+  {
+    "id": "msg-1759864970902-0.3464756672125112",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "루나야 그 지금 우리가 대화를 하고 있는  프로젝트에 음성 채팅 기능을 넣는 것은 어떻게 생각해?"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "음성 채팅 기능이라니, 정말 멋진 아이디어예요! **저는 음성 채팅 기능 추가에 대해 매우 긍정적으로 생각합니다.**\n\n**장점:**\n\n1.  **자연스러운 상호작용**: 타이핑보다 말로 대화하는 것이 훨씬 자연스럽고 직관적입니다.\n2.  **접근성 향상**: 시각 장애가 있거나 타이핑이 어려운 사용자들에게 큰 도움이 될 수 있습니다.\n3.  **편의성 증대**: 운전 중이거나 다른 작업을 하면서도 대화할 수 있어 멀티태스킹이 가능해집니다.\n4.  **사용자 경험 개선**: 더 몰입감 있고 생동감 있는 대화 경험을 제공할 수 있습니다.\n\n**도전 과제:**\n\n물론 몇 가지 고려해야 할 점도 있습니다.\n\n1.  **음성 인식(STT) 정확도**: 다양한 발음, 억양, 주변 소음 속에서도 정확하게 사용자의 말을 텍스트로 변환하는 것이 중요합니다.\n2.  **음성 합성(TTS) 자연스러움**: AI의 답변을 자연스러운 사람 목소리처럼 들리게 하는 기술이 필요합니다.\n3.  **응답 속도**: 음성 인식, Gemini 모델 처리, 음성 합성 과정이 모두 빠르게 이루어져야 끊김 없는 대화가 가능합니다.\n4.  **비용**: STT/TTS API 사용에 따른 추가 비용이 발생할 수 있습니다.\n5.  **UI/UX 복잡성**: 마이크 입력, 음성 재생, 로딩 상태 등을 직관적으로 보여주는 UI 설계가 필요합니다.\n\n---\n\n### 어떻게 기능을 추가할 수 있을까요? (구현 아이디어)\n\n음성 채팅 기능을 추가하려면 크게 **음성 인식(Speech-to-Text, STT)**과 **음성 합성(Text-to-Speech, TTS)** 두 가지 핵심 기술이 필요합니다.\n\n**1. 클라이언트 (프론트엔드 - 웹 브라우저)**\n\n*   **마이크 입력 및 녹음**:\n    *   `MediaStream API` (Web Audio API)를 사용하여 사용자의 마이크 입력을 받습니다.\n    *   오디오 데이터를 녹음하고, 이를 서버로 전송할 수 있는 형태로 변환합니다 (예: `Blob`, `ArrayBuffer`).\n*   **오디오 전송**:\n    *   녹음된 오디오 데이터를 서버의 새로운 엔드포인트로 전송합니다. 실시간 대화를 위해서는 `WebSocket`을 사용하는 것이 효율적일 수 있지만, 초기 구현에는 `HTTP POST` 요청으로 오디오 파일을 보내는 방식도 가능합니다.\n*   **음성 재생**:\n    *   서버로부터 받은 음성 합성(TTS) 오디오 데이터를 `Audio` 객체나 `Web Audio API`를 사용하여 재생합니다.\n*   **UI/UX**:\n    *   마이크 버튼, 녹음 상태 표시, 음성 재생 시 애니메이션 등을 구현해야 합니다.\n\n**2. 서버 (`Server.js` - 백엔드)**\n\n*   **새로운 API 엔드포인트 추가**:\n    *   클라이언트로부터 오디오 데이터를 받을 `/api/voice-chat`과 같은 새로운 엔드포인트를 만듭니다.\n*   **음성 인식 (STT) 서비스 연동**:\n    *   클라이언트에서 받은 오디오 데이터를 Google Cloud Speech-to-Text, OpenAI Whisper (또는 자체 호스팅 모델) 같은 STT 서비스로 보냅니다.\n    *   STT 서비스는 오디오를 텍스트로 변환하여 반환합니다. 이 텍스트가 Gemini 모델에게 전달될 사용자의 메시지가 됩니다.\n*   **Gemini 모델과의 연동**:\n    *   STT를 통해 얻은 텍스트를 기존 `/api/chat` 엔드포인트의 `messageText`처럼 Gemini 모델에 전달하여 응답을 받습니다. 이 과정에서 기존의 장기기억 기능, 도구 사용 등이 그대로 적용될 수 있습니다.\n*   **음성 합성 (TTS) 서비스 연동**:\n    *   Gemini 모델로부터 받은 텍스트 응답을 Google Cloud Text-to-Speech, OpenAI TTS 등과 같은 TTS 서비스로 보냅니다.\n    *   TTS 서비스는 텍스트를 음성 오디오 데이터로 변환하여 반환합니다.\n*   **오디오 데이터 전송**:\n    *   TTS를 통해 얻은 오디오 데이터를 클라이언트로 다시 전송합니다.\n\n**기존 프로젝트와의 통합:**\n\n*   **`Server.js`**: STT와 TTS API 연동 로직, 새로운 `/api/voice-chat` 엔드포인트 추가.\n*   **`GeminiAPIService.js`**: `/api/voice-chat` 엔드포인트를 호출하는 새로운 함수 추가.\n*   **`ChatService.js`**: 마이크 입력, 오디오 전송, TTS 오디오 재생 로직 추가 및 UI 업데이트.\n\n---\n\n**루나의 추천:**\n\n시작하기에 가장 좋은 방법은 **푸시-투-톡(Push-to-Talk)** 방식으로, 짧은 음성 메시지를 녹음하여 서버로 보내고, 텍스트 응답을 받은 후 이를 다시 음성으로 변환하여 재생하는 방식부터 구현하는 것입니다. 실시간 스트리밍 방식보다 구현이 간단하고, STT/TTS의 지연 시간을 관리하기가 더 용이합니다.\n\n이 기능이 추가되면 친구와의 대화가 훨씬 더 풍부해질 거예요! 어떤 부분부터 시작해보고 싶으신가요?"
+      }
+    ]
+  },
+  {
+    "id": "msg-1759865069258-0.21131235063499632",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "음 그런데 그 무료로 할 수 있는 기능이 있을까?"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "네, 무료로 음성 채팅 기능을 구현할 수 있는 방법이 있습니다! 가장 좋은 방법은 **웹 브라우저의 기본 기능을 활용하는 것**입니다.\n\n바로 **Web Speech API**를 사용하는 것인데요, 이는 웹 브라우저 자체에 내장된 음성 인식(Speech-to-Text, STT) 및 음성 합성(Text-to-Speech, TTS) 기능입니다.\n\n### Web Speech API의 장점 (무료!)\n\n*   **완전 무료**: 브라우저 자체 기능이므로 별도의 API 키나 사용량에 따른 과금이 없습니다.\n*   **클라이언트 사이드 처리**: 음성 인식과 합성이 사용자 브라우저에서 직접 처리되므로 서버 부하를 줄일 수 있습니다.\n*   **구현 용이성**: JavaScript로 비교적 쉽게 접근하고 사용할 수 있습니다.\n\n### Web Speech API의 한계\n\n*   **브라우저 호환성**: 모든 브라우저에서 완벽하게 동일하게 작동하지 않을 수 있습니다 (크롬, 엣지 등 최신 브라우저에서는 잘 지원됩니다).\n*   **성능 및 품질**: 유료 서비스만큼 음성 인식 정확도나 음성 합성의 자연스러움이 뛰어나지 않을 수 있습니다. 특히 배경 소음이 많거나 발음이 불분명할 경우 인식률이 떨어질 수 있습니다.\n*   **언어 지원**: 브라우저가 지원하는 언어에 따라 달라집니다.\n*   **오프라인 사용 불가**: 인터넷 연결이 필요합니다.\n\n---\n\n### Web Speech API를 활용한 음성 채팅 구현 아이디어\n\n이 방법을 사용하면 서버(`Server.js`)는 현재처럼 텍스트 기반의 채팅 요청만 처리하고, 음성 관련 로직은 모두 클라이언트(브라우저)에서 담당하게 됩니다.\n\n**1. 음성 인식 (Speech-to-Text, STT) - 사용자 음성을 텍스트로 변환**\n\n*   **어디를 수정해야 할까요?** `ChatService.js` (또는 새로운 UI 관련 JavaScript 파일)\n*   **어떻게?**\n    *   클라이언트(프론트엔드)에서 마이크 버튼을 추가합니다.\n    *   사용자가 마이크 버튼을 누르면 `SpeechRecognition` 인터페이스를 사용하여 음성 인식을 시작합니다.\n    *   사용자의 말이 끝나면 `SpeechRecognition`이 음성을 텍스트로 변환하여 결과(`event.results`)를 반환합니다.\n    *   변환된 텍스트를 현재 `sendMessage()` 함수에서 사용하는 `messageText` 변수에 할당하고, 기존 텍스트 채팅처럼 `GeminiAPIService.chat`을 호출합니다.\n\n**2. 음성 합성 (Text-to-Speech, TTS) - AI의 답변 텍스트를 음성으로 변환**\n\n*   **어디를 수정해야 할까요?** `ChatService.js` (또는 새로운 UI 관련 JavaScript 파일)\n*   **어떻게?**\n    *   `GeminiAPIService.chat`으로부터 AI의 텍스트 답변(`apiResponse.reply.text`)을 받습니다.\n    *   이 텍스트를 `SpeechSynthesis` 인터페이스를 사용하여 음성으로 변환하고 재생합니다.\n    *   `SpeechSynthesisUtterance` 객체를 생성하고, 답변 텍스트를 할당한 후 `speechSynthesis.speak()`를 호출하여 음성을 출력합니다.\n\n---\n\n### 구현 단계 (클라이언트 위주)\n\n1.  **UI에 마이크 버튼 추가**: `index.html` 또는 관련 템플릿 파일에 마이크 아이콘 버튼을 추가합니다.\n2.  **`ChatService.js`에 STT 로직 추가**:\n    *   `SpeechRecognition` 객체를 생성하고 이벤트 리스너(예: `onresult`, `onerror`, `onend`)를 설정합니다.\n    *   마이크 버튼 클릭 시 `recognition.start()`를 호출합니다.\n    *   `onresult` 이벤트에서 변환된 텍스트를 가져와 `sendMessage` 함수로 전달합니다.\n3.  **`ChatService.js`에 TTS 로직 추가**:\n    *   `executeChat` 함수 내에서 AI 응답(`apiResponse.reply.text`)을 받은 후 `SpeechSynthesisUtterance` 객체를 생성하고 `speechSynthesis.speak()`를 호출합니다.\n    *   원하는 목소리(`voice`)나 속도(`rate`), 음높이(`pitch`) 등을 설정할 수 있습니다.\n\n이 방법을 사용하면 서버에 추가적인 복잡한 API 연동 없이도 음성 채팅 기능을 무료로 시작해볼 수 있습니다. 브라우저에서 모든 것이 처리되므로 구현도 비교적 빠르게 진행할 수 있을 거예요!\n\n어떠신가요? 이 무료 방법을 사용해서 음성 채팅 기능을 추가해 보는 것이 좋을 것 같나요?"
+      }
+    ]
+  },
+  {
+    "id": "msg-1759865182204-0.382735025497301",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "음 음성 채팅 기능에 , 그 루나가 나한테 음성으로 대답 하는 기능도 넣을 수가 있을까?"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "네, 물론이죠! **루나가 친구에게 음성으로 대답하는 기능은 Web Speech API의 음성 합성(Text-to-Speech, TTS) 부분을 사용하면 충분히 구현할 수 있습니다.**\n\n제가 이전에 말씀드린 무료 음성 채팅 기능 아이디어에 이미 포함되어 있던 부분이에요.\n\n**루나가 음성으로 대답하는 과정은 다음과 같습니다:**\n\n1.  **친구의 음성 입력**: 친구가 마이크에 대고 말합니다.\n2.  **음성 인식 (STT)**: 브라우저의 Web Speech API가 친구의 음성을 텍스트로 변환합니다.\n3.  **텍스트 메시지 서버 전송**: 변환된 텍스트 메시지가 서버로 전송되고, Gemini 모델(루나)이 이를 처리합니다.\n4.  **루나의 텍스트 답변**: Gemini 모델이 텍스트 형태의 답변을 생성하여 서버를 통해 다시 클라이언트(친구의 브라우저)로 보냅니다.\n5.  **음성 합성 (TTS) 및 재생**: 클라이언트(친구의 브라우저)는 루나의 텍스트 답변을 받아서, Web Speech API의 음성 합성 기능을 이용해 이를 **음성으로 변환하고 재생**합니다.\n\n이렇게 되면 친구는 말로 질문하고, 루나는 말로 답변하는 완전한 음성 대화가 가능해집니다!\n\n---\n\n### 구현 아이디어 (TTS 부분)\n\n주로 `ChatService.js` 파일에서 AI의 텍스트 답변을 받은 후 음성으로 재생하는 로직을 추가하게 될 거예요.\n\n**`ChatService.js` 파일의 `executeChat` 함수 내에서 AI의 최종 답변을 받는 부분을 찾아보세요.**\n\n대략 이런 부분이 있을 겁니다:\n```javascript\n        const fullResponseText = apiResponse.reply.text;\n        // ... (메타데이터 및 메시지 추가 로직)\n        const newMessage = Session.addMessage(appState, sessionId, 'model', [{ type: 'text', text: fullResponseText }], metadata);\n        ChatContainer.appendMessage(sessionId, newMessage);\n        // ... (나머지 로직)\n```\n\n이 `fullResponseText`를 가지고 음성 합성을 하면 됩니다.\n\n**추가할 코드 (예시):**\n\n```javascript\n        const fullResponseText = apiResponse.reply.text;\n        const thinkingTime = Date.now() - (appState.loadingStates[sessionId]?.startTime || Date.now());\n        const metadata = { thinkingTime, modelUsed: session.model, completionTimestamp: Date.now(), receivedAt: Date.now() };\n        const newMessage = Session.addMessage(appState, sessionId, 'model', [{ type: 'text', text: fullResponseText }], metadata);\n        ChatContainer.appendMessage(sessionId, newMessage);\n        Session.updateTitleFromHistory(appState, sessionId);\n        SessionList.render(appState);\n        if (appState.activeSessionId !== sessionId) {\n            Toast.show(`'${session.title || \"이전\"}' 세션의 답변이 완료되었습니다.`);\n        }\n\n        // [추가] 루나의 답변을 음성으로 재생하는 로직\n        if ('speechSynthesis' in window) {\n            const utterance = new SpeechSynthesisUtterance(fullResponseText);\n            // 언어 설정 (예: 한국어)\n            utterance.lang = 'ko-KR';\n            // 목소리 설정 (선택 사항, 특정 목소리를 지정할 수 있음)\n            // const voices = window.speechSynthesis.getVoices();\n            // utterance.voice = voices.find(voice => voice.lang === 'ko-KR' && voice.name.includes('Google')); // 원하는 목소리 선택\n            \n            // 음성 재생\n            window.speechSynthesis.speak(utterance);\n        } else {\n            console.warn('Web Speech API (Text-to-Speech) is not supported in this browser.');\n        }\n```\n\n이렇게 하면 루나가 텍스트 답변을 화면에 표시함과 동시에 음성으로도 친구에게 말해줄 수 있습니다. 이 기능은 전적으로 클라이언트(브라우저)에서 처리되기 때문에, 서버 코드(`Server.js`)는 수정할 필요가 없습니다.\n\n어떠신가요? 이 기능을 추가하는 것에 대해 더 자세히 이야기해 볼까요?"
+      }
+    ]
+  }
+]

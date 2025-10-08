@@ -1,0 +1,30 @@
+/* --- Global & Layout --- */
+body {
+    font-family: var(--font-primary);
+    font-size: 16px; /* [MODIFIED] Increased base font size for better readability */
+    margin: 0;
+    background-color: var(--bg-main);
+    display: flex;
+    height: 100vh;
+    color: var(--text-primary);
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* --- [NEW] Custom Scrollbar Styling --- */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: var(--border-secondary);
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background-color: var(--text-secondary);
+}

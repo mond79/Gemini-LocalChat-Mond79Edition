@@ -1,0 +1,97 @@
+[
+  {
+    "id": "msg-1759862151038-0.5964900249571634",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "안녕 내 이름 혹시 알아?"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "네, 당신의 이름은 몬드님입니다."
+      }
+    ]
+  },
+  {
+    "id": "msg-1759862169087-0.9485515628182082",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "내가 무슨 고기를 좋아하는지 혹시 알아?"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "죄송하지만, 어떤 고기를 좋아하시는지에 대한 정보는 제가 가지고 있지 않습니다. 이전에 알려주신 정보는 '내 이름은 몬드야' 뿐입니다."
+      }
+    ]
+  },
+  {
+    "id": "msg-1759862235013-0.6023672761265791",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "나는 소고기가 체질에 맞는데, 이상하게 나는 돼지고기가 좋더라"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "이제 당신은 돼지고기를 좋아한다는 것을 기억할게요!"
+      }
+    ]
+  },
+  {
+    "id": "msg-1759864854344-0.8632681786371807",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "안녕 내 음악 장비가 무엇이 있는지 혹시 알고 있어?"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "제가 알고 있는 정보는 당신이 돼지고기를 좋아한다는 것 뿐입니다. 혹시 음악 장비에 대한 정보도 알려주시면 기억해 드릴 수 있습니다!\n"
+      }
+    ]
+  },
+  {
+    "id": "msg-1759864875401-0.40812681337893486",
+    "role": "user",
+    "parts": [
+      {
+        "type": "text",
+        "text": "음 친구가 기억을 하고 있는 정보는 무엇이야?"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "type": "text",
+        "text": "제가 기억하고 있는 당신에 대한 정보는 다음과 같습니다:\n\n*   당신의 이름은 몬드입니다.\n*   당신은 돼지고기를 좋아합니다.\n*   당신은 매운 음식을 좋아합니다.\n*   당신의 컴퓨터 사양은 Intel(R) Core(TM) i7-7700HQ CPU @ 2.80GHz 2.81 GHz, 32.0GB RAM, Samsung SSD 990 EVO Plus 1TB, Samsung SSD 870 EVO 4TB, NVIDIA GeForce 1060 6 G. 입니다.\n*   당신의 음악 장비는 V Collection 8, Komplete 14 Standard, Studio One 7 Daw 기본 가상악기, MiniFuse 2 오디오 인터페이스, MiniLab 3 Black Edition 키보드, se7 다이나믹 마이크, MR4 스피커, ATH-M50X 헤드셋. 입니다."
+      }
+    ]
+  }
+]
