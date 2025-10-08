@@ -9,9 +9,6 @@ import * as AnimationManager from '../modules/AnimationManager.js';
 import * as SessionList from '../../components/SessionList.js';
 import { saveData } from '../../utils/storage.js';
 
-let ttsEnabled = false; // TTS 기능 활성화 여부
-let synth = window.speechSynthesis; // 웹 음성 합성 API
-
 let currentRequestController = null;
 
 const getApiKeyIdentifier = (key) => key ? `key_${key.slice(-4)}` : 'no_key';
@@ -119,12 +116,11 @@ async function executeChat(sessionId, signal) {
         Session.updateTitleFromHistory(appState, sessionId);
 
         // ==========================================================
-        // [✅ 바로 이 부분이 추가/수정된 부분입니다!]
-        // TTS 기능이 켜져 있다면, 답변을 목소리로 읽어줍니다.
-        if (ttsEnabled && fullResponseText) {
-            speakText(fullResponseText);
+        // [✅ 최종 수정] Google Cloud TTS를 호출하여 음성을 재생합니다.
+        // appState.settings.ttsEnabled는 설정(settings)에서 관리될 TTS ON/OFF 상태입니다.
+        if (appState.settings.ttsEnabled && fullResponseText) {
+            playAudioFromText(fullResponseText);
         }
-        // [✅ 여기까지가 추가/수정된 부분입니다!]
         // ==========================================================
 
         SessionList.render(appState);
@@ -249,34 +245,67 @@ export function readFileAsPromise(file) {
     });
 }
 
-// [✅ 새로운 함수 1] 텍스트를 음성으로 읽어주는 함수
-function speakText(text) {
-    if (synth.speaking) {
-        console.log('SpeechSynthesis is already speaking. Cancelling...');
-        synth.cancel();
-    }
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'ko-KR'; // 한국어 목소리 설정
-    utterance.rate = 1; // 말하기 속도
-    utterance.pitch = 1; // 음높이
-    
-    utterance.onerror = (event) => {
-        console.error('SpeechSynthesis Error', event);
-        Toast.show(`음성 출력 오류: ${event.error}`);
-    };
+// 현재 재생 중인 오디오를 제어하기 위한 변수
+let currentAudio = null;
 
-    synth.speak(utterance);
+// [✅ 새로운 함수 1] 우리 서버의 TTS 엔드포인트를 호출하고 오디오를 재생하는 함수
+async function playAudioFromText(text) {
+    // 만약 이전에 재생 중인 오디오가 있다면 중지
+    if (currentAudio) {
+        currentAudio.pause();
+        currentAudio = null;
+    }
+
+    try {
+        const response = await fetch('/api/synthesize-speech', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.message || '음성 파일 생성에 실패했습니다.');
+        }
+
+        const data = await response.json();
+        const audioContent = data.audioContent;
+
+        const audioSource = `data:audio/mp3;base64,${audioContent}`;
+        currentAudio = new Audio(audioSource);
+        
+        await currentAudio.play();
+
+    } catch (error) {
+        console.error('음성 재생 오류:', error);
+        Toast.show(`음성 재생 오류: ${error.message}`);
+    } finally {
+        // 재생이 끝나면 currentAudio를 null로 만들어 다음 재생을 준비
+        if (currentAudio) {
+            currentAudio.onended = () => {
+                currentAudio = null;
+            };
+        }
+    }
 }
 
-// [✅ 새로운 함수 2] TTS 버튼의 상태를 토글하는 함수 (외부에서 호출할 예정)
+// [✅ 새로운 함수 2] TTS 버튼의 상태를 토글하고, appState에 저장하는 함수
 export function toggleTTS() {
-    ttsEnabled = !ttsEnabled;
-    Toast.show(ttsEnabled ? "음성 답변이 활성화되었습니다." : "음성 답변이 비활성화되었습니다.");
-    
-    // 만약 비활성화될 때 말하고 있었다면, 중단시킵니다.
-    if (!ttsEnabled && synth.speaking) {
-        synth.cancel();
+    // appState에 ttsEnabled 상태가 없으면 초기화
+    if (typeof appState.settings.ttsEnabled === 'undefined') {
+        appState.settings.ttsEnabled = false;
     }
 
-    return ttsEnabled;
+    appState.settings.ttsEnabled = !appState.settings.ttsEnabled;
+    saveData(appState); // 변경된 설정을 localStorage에 저장
+
+    Toast.show(appState.settings.ttsEnabled ? "음성 답변이 활성화되었습니다." : "음성 답변이 비활성화되었습니다.");
+    
+    // 비활성화 시 재생 중인 오디오 중지
+    if (!appState.settings.ttsEnabled && currentAudio) {
+        currentAudio.pause();
+        currentAudio = null;
+    }
+
+    return appState.settings.ttsEnabled;
 }

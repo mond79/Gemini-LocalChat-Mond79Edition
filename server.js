@@ -2,6 +2,7 @@ require('dotenv').config();
 const SERPAPI_API_KEY = process.env.SERPAPI_API_KEY;
 const OPENWEATHER_API_KEY = process.env.OPENWEATHER_API_KEY;
 const KAKAO_API_KEY = process.env.KAKAO_API_KEY; 
+const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const fs = require('fs/promises'); // <-- 파일 시스템(Promise 기반) 모듈
 const { v4: uuidv4 } = require('uuid'); // <-- UUID 생성 모듈
 const express = require('express');
@@ -505,6 +506,47 @@ app.post('/api/chat', async (req, res) => {
     } catch (error) {
         console.error('채팅 API 오류:', error);
         res.status(500).json({ message: `대화 생성 중 오류: ${error.message}` });
+    }
+});
+
+// [✅ 새로운 기능] 텍스트를 음성으로 변환하는 API 엔드포인트
+app.post('/api/synthesize-speech', async (req, res) => {
+    const { text } = req.body;
+    if (!text) {
+        return res.status(400).json({ message: '음성으로 변환할 텍스트가 필요합니다.' });
+    }
+    if (!GOOGLE_API_KEY) {
+        return res.status(500).json({ message: 'Google API 키가 서버에 설정되지 않았습니다.' });
+    }
+
+    const GOOGLE_TTS_URL = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${GOOGLE_API_KEY}`;
+
+    try {
+        const response = await fetch(GOOGLE_TTS_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                input: { text: text },
+                // WaveNet 기반의 자연스러운 한국어 여성 목소리
+                voice: { languageCode: 'ko-KR', name: 'ko-KR-Wavenet-A' }, 
+                audioConfig: { audioEncoding: 'MP3' }
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            console.error('Google TTS API 오류:', errorData);
+            throw new Error(`Google TTS API 요청 실패: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        // data.audioContent는 Base64로 인코딩된 오디오 데이터입니다.
+        // 우리는 이것을 클라이언트로 그대로 전달합니다.
+        res.json({ audioContent: data.audioContent });
+
+    } catch (error) {
+        console.error('음성 합성 중 오류 발생:', error);
+        res.status(500).json({ message: `음성 합성 중 오류: ${error.message}` });
     }
 });
 
