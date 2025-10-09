@@ -219,6 +219,14 @@ export async function prepareMessageParts(messageText, attachedFiles = []) {
     for (const file of attachedFiles) {
         if (file.type.startsWith('image/')) {
             parts.push({ type: 'image', mimeType: file.type, data: file.data });
+
+        // ==========================================================
+        // [✅ 바로 이 부분이 추가/수정된 부분입니다!]
+        } else if (file.type.startsWith('audio/')) {
+            parts.push({ type: 'audio', mimeType: file.type, data: file.data });
+        // [✅ 여기까지가 추가/수정된 부분입니다!]
+        // ==========================================================  
+
         } else if (file.type === 'application/pdf') {
             parts.push({ type: 'pdf-attachment', name: file.name, data: file.data });
         } else {

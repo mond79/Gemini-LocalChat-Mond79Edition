@@ -11,6 +11,7 @@ const path = require('path');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const pdf = require('pdf-parse');
 const { exec } = require('child_process');
+const cheerio = require('cheerio');
 
 const chatHistoriesDir = path.join(__dirname, 'chat_histories'); // <-- 이 줄을 추가
 
@@ -38,7 +39,8 @@ const tools = {
   searchWeb: searchWeb,
   getWeather: getWeather,
   saveUserProfile, 
-  loadUserProfile   
+  loadUserProfile,
+  scrapeWebsite   
 };
 
 
@@ -164,11 +166,36 @@ function formatHistoryForGoogleAI(history) {
         role: msg.role === 'system' ? 'user' : msg.role,
         parts: msg.parts
             .map(part => {
-                if (part.type === 'text') return { text: part.text };
-                if (part.type === 'image') {
-                    const dataParts = (part.data || '').split(',');
-                    return { inlineData: { mimeType: part.mimeType, data: dataParts[1] || '' } };
+                if (part.type === 'text') {
+                    return { text: part.text };
                 }
+
+                if (part.type === 'image' || part.type === 'audio') {
+                    // 데이터가 "data:[MIME타입];base64," 형식의 URL로 시작하는지 확인
+                    if (part.data && part.data.startsWith('data:')) {
+                        const base64Data = part.data.split(',')[1] || '';
+                        
+                        // [✅ 최종 수정] 서버에서 한번 더 확실하게 Base64로 인코딩합니다.
+                        // 클라이언트에서 넘어온 데이터가 순수하지 않을 경우를 대비한 최종 안전장치입니다.
+                        try {
+                            // 이미 Base64인 문자열을 다시 버퍼로 만들었다가 Base64로 인코딩
+                            const buffer = Buffer.from(base64Data, 'base64');
+                            const reEncodedData = buffer.toString('base64');
+
+                            return { 
+                                inlineData: { 
+                                    mimeType: part.mimeType, 
+                                    data: reEncodedData
+                                } 
+                            };
+                        } catch (e) {
+                            console.error('Base64 재인코딩 실패:', e);
+                            return null; // 오류 발생 시 이 part는 제외
+                        }
+                    }
+                    return null; // 유효한 데이터 URL이 아니면 제외
+                }
+
                 return null;
             })
             .filter(Boolean)
@@ -331,6 +358,44 @@ async function searchWeb({ query }) {
     }
 }
 
+// [✅ 새로운 도구] URL에 접속해서 텍스트 내용을 긁어오는 함수
+async function scrapeWebsite({ url }) {
+    console.log(`[Web Scraper] 웹사이트 스크래핑 시도: ${url}`);
+    try {
+        // fetch를 사용해 해당 URL의 HTML 내용을 가져옵니다.
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`웹사이트에 접속할 수 없습니다 (${response.status})`);
+        }
+        const html = await response.text();
+
+        // cheerio를 사용해 HTML을 로드하고, 텍스트만 추출합니다.
+        const $ = cheerio.load(html);
+        
+        // 불필요한 태그(스크립트, 스타일)를 먼저 제거해서 정확도를 높입니다.
+        $('script, style, noscript, iframe, header, footer, nav').remove();
+
+        // 본문(body)의 텍스트를 가져옵니다.
+        let bodyText = $('body').text();
+        
+        // 여러 줄바꿈과 공백을 정리해서 깔끔하게 만듭니다.
+        bodyText = bodyText.replace(/\s\s+/g, ' ').trim();
+
+        // 너무 긴 텍스트는 AI가 처리하기 어려우므로, 앞부분만 잘라냅니다. (예: 5000자)
+        const maxLength = 5000;
+        if (bodyText.length > maxLength) {
+            bodyText = bodyText.substring(0, maxLength) + "... (내용이 너무 길어 일부만 표시)";
+        }
+        
+        console.log(`[Web Scraper] 스크래핑 성공. (길이: ${bodyText.length})`);
+        return `[웹사이트 내용: ${url}]\n\n${bodyText}`;
+
+    } catch (error) {
+        console.error('웹사이트 스크래핑 중 오류 발생:', error);
+        return `죄송합니다, 해당 웹사이트('${url}')의 내용을 읽어오는 데 실패했습니다: ${error.message}`;
+    }
+}
+
 app.post('/api/chat', async (req, res) => {
     // [기억력 기능 1] 요청에서 'chatId'를 받습니다. 없으면 null입니다.
     let { model: modelName, history, chatId, historyTokenLimit, systemPrompt, temperature, topP } = req.body;
@@ -403,6 +468,17 @@ app.post('/api/chat', async (req, res) => {
                       },
                       required: ['query']
                     }
+                  },
+                  {
+                      name: 'scrapeWebsite',
+                      description: '사용자가 제공한 특정 URL(웹사이트 링크)의 내용을 읽고 분석하거나 요약해야 할 때 사용합니다.',
+                      parameters: {
+                          type: 'object',
+                          properties: {
+                              url: { type: 'string', description: '내용을 읽어올 정확한 웹사이트 주소 (URL). 예: "https://..."' }
+                          },
+                          required: ['url']
+                      }
                   },
                   {
                     name: 'saveUserProfile',
@@ -503,9 +579,42 @@ app.post('/api/chat', async (req, res) => {
         // [기억력 기능 7] 클라이언트에게 AI의 답변과 함께, 앞으로 계속 사용할 'chatId'를 보내줍니다.
         res.json({ reply: finalReply, chatId: chatId, usage: response.usageMetadata });
 
+        // [✅ 새로운 로직] 사용자의 마지막 메시지에서 URL을 자동으로 추출합니다.
+        const lastUserText = newUserMessage.parts.find(p => p.type === 'text')?.text || '';
+        const urlRegex = /(https?:\/\/[^\s]+)/g;
+        const foundUrls = lastUserText.match(urlRegex);
+
+        // 만약 URL이 발견되었고, 사용자가 명시적으로 분석을 요청하지 않았더라도,
+        // AI가 스스로 판단할 수 있도록 대화 기록을 살짝 수정해줍니다.
+        if (foundUrls && !lastUserText.includes('요약해줘') && !lastUserText.includes('설명해줘')) {
+            const enrichedPrompt = {
+                role: 'user',
+                parts: [{ 
+                    type: 'text', 
+                    text: `${lastUserText}\n\n(시스템 노트: 위 메시지에 URL이 포함되어 있습니다. 필요하다면 'scrapeWebsite' 도구를 사용하여 해당 URL의 내용을 분석하고 답변하세요.)`
+                }]
+            };
+            // 원래 메시지를 제거하고, 보강된 프롬프트로 교체
+            conversationHistory.pop();
+            conversationHistory.push(enrichedPrompt);
+            console.log(`[Prompt Enhancer] URL을 감지하여 프롬프트를 보강했습니다.`);
+        }
+
+
     } catch (error) {
+        // [✅ 수정된 부분] 오류 메시지를 더 안전하게 만듭니다.
         console.error('채팅 API 오류:', error);
-        res.status(500).json({ message: `대화 생성 중 오류: ${error.message}` });
+
+        // Gemini API가 보낸 구체적인 오류 정보가 있다면 그것을 사용하고,
+        // 없다면 일반적인 오류 메시지를 사용합니다.
+        const errorMessage = error.errorDetails 
+            ? `Google API 오류: ${error.errorDetails[0]?.fieldViolations[0]?.description || error.message}`
+            : `대화 생성 중 오류: ${error.message}`;
+
+        // 특수 문자를 제거하여 marked.js 오류를 방지합니다.
+        const sanitizedErrorMessage = errorMessage.replace(/[^\x20-\x7E]/g, '');
+
+        res.status(500).json({ message: sanitizedErrorMessage });
     }
 });
 
