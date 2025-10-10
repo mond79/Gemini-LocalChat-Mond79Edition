@@ -87,7 +87,14 @@ async function initializeApp() {
             renderAll();
         });
         
-
+        // '다시 듣기 시작' 신호를 감지하는 글로벌 이벤트 리스너
+        document.addEventListener('start-listening-again', () => {
+            // 신호가 감지되면, 마이크 버튼 핸들러를 강제로 호출합니다.
+            if (handlers.handleMicClick) {
+                handlers.handleMicClick();
+            }
+        });
+        // ==========================================================
 
         updateLoadingStatus('API 모델 목록 동기화 중...');
         if (appState.settings.apiKey) {

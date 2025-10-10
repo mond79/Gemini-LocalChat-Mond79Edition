@@ -291,10 +291,18 @@ async function playAudioFromText(text) {
         console.error('음성 재생 오류:', error);
         Toast.show(`음성 재생 오류: ${error.message}`);
     } finally {
-        // 재생이 끝나면 currentAudio를 null로 만들어 다음 재생을 준비
         if (currentAudio) {
+            // [✅ 최종 수정] 재생이 끝나면 이 부분이 실행됩니다!
             currentAudio.onended = () => {
+                console.log('[TTS] 음성 출력이 종료되었습니다.');
                 currentAudio = null;
+
+                // [✅ 핵심 로직!] 연속 대화 모드가 켜져 있는지 확인합니다.
+                if (appState.settings.continuousConversationMode) {
+                    console.log('[Continuous Mode] 연속 대화 모드가 활성화되어, 음성 인식을 다시 시작합니다.');
+                    // '이제 다시 들을 시간이야!' 라는 신호를 프로그램 전체에 보냅니다.
+                    document.dispatchEvent(new CustomEvent('start-listening-again'));
+                }
             };
         }
     }
@@ -313,10 +321,19 @@ export function toggleTTS() {
     Toast.show(appState.settings.ttsEnabled ? "음성 답변이 활성화되었습니다." : "음성 답변이 비활성화되었습니다.");
     
     // 비활성화 시 재생 중인 오디오 중지
-    if (!appState.settings.ttsEnabled && currentAudio) {
-        currentAudio.pause();
-        currentAudio = null;
+    if (!appState.settings.ttsEnabled) {
+        if (currentAudio) {
+            currentAudio.pause();
+            currentAudio = null;
+        }
+        // [✅ 수정] TTS를 끄면, 연속 대화 모드도 함께 끕니다.
+        if (appState.settings.continuousConversationMode) {
+            appState.settings.continuousConversationMode = false;
+            saveData(appState); // 변경된 내용 저장
+            // UI 버튼 상태도 동기화하라는 신호를 보냅니다.
+            document.dispatchEvent(new CustomEvent('ui-update-needed'));
+        }
     }
 
-    return appState.settings.ttsEnabled;
+    return appState.settings.ttsEnabled; // <-- ✅ 이 return 문장이 함수 안에 있도록 수정
 }

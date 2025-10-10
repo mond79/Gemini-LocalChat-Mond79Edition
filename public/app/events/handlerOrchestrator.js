@@ -223,6 +223,26 @@ export const handlers = {
          const isActive = ChatService.toggleTTS();
          ttsButton.classList.toggle('active', isActive);
      },
+
+     // [✅ 새로운 핸들러 추가]
+    handleToggleContinuousMode() {
+        // TTS가 꺼져있으면 이 모드를 켤 수 없다고 알려줍니다.
+        if (!appState.settings.ttsEnabled) {
+            Toast.show("음성 답변(TTS)이 활성화되어야 사용할 수 있습니다.");
+            return;
+        }
+        // appState의 상태를 변경합니다.
+        if (typeof appState.settings.continuousConversationMode === 'undefined') {
+            appState.settings.continuousConversationMode = false;
+        }
+        appState.settings.continuousConversationMode = !appState.settings.continuousConversationMode;
+        saveData(appState);
+
+        Toast.show(appState.settings.continuousConversationMode ? "연속 대화 모드가 활성화되었습니다." : "연속 대화 모드가 비활성화되었습니다.");
+        
+        // UI 버튼의 'active' 상태를 업데이트합니다.
+        $('#continuous-mode-btn').classList.toggle('active', appState.settings.continuousConversationMode);
+    },
      
     // [✅ 여기까지가 추가/수정된 부분입니다!]
     // ==========================================================

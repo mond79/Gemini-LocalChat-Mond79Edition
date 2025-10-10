@@ -106,6 +106,7 @@ export function bindEvents(handlers) {
 
     // TTS Button Binding
     $('#tts-btn')?.addEventListener('click', handlers.handleTtsClick);
+    $('#continuous-mode-btn')?.addEventListener('click', handlers.handleToggleContinuousMode);
     // ==========================================================
     const messageInput = $('#message-input');
     messageInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handlers.handleSendMessage(); } });
