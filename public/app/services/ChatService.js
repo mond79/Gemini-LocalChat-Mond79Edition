@@ -217,24 +217,23 @@ function createCodeSummary(file, content) {
 export async function prepareMessageParts(messageText, attachedFiles = []) {
     const parts = [];
     for (const file of attachedFiles) {
-        // [✅ 최종 수정]
-        // attachedFiles 배열 안의 'file' 객체는 이미 파일 읽기가 완료된 상태입니다.
-        // 따라서, file.data를 직접 사용하기만 하면 됩니다.
-        // 더 이상 readFileAsPromise를 호출하지 않습니다.
+        // [✅ 최종 수정] 모든 파일 타입에 대해 fileData를 일관되게 사용합니다.
+        // attachedFiles의 'file' 객체는 이미 파일 읽기가 완료된 객체입니다.
+        const fileData = file.data; 
 
         if (file.type.startsWith('image/')) {
-            parts.push({ type: 'image', mimeType: file.type, data: file.data });
+            parts.push({ type: 'image', mimeType: file.type, data: fileData });
         } else if (file.type.startsWith('audio/')) {
-            // 오디오는 현재 API에서 지원하지 않으므로 주석 처리
-            // parts.push({ type: 'audio', mimeType: file.type, data: file.data });
             console.warn("오디오 파일 첨부는 현재 비활성화되어 있습니다.");
+            // parts.push({ type: 'audio', mimeType: file.type, data: fileData });
         } else if (file.type === 'application/pdf') {
-            parts.push({ type: 'pdf-attachment', name: file.name, data: file.data });
+            parts.push({ type: 'pdf-attachment', name: file.name, data: fileData });
         } else if (file.name.endsWith('.docx')) {
-            parts.push({ type: 'docx-attachment', name: file.name, data: file.data });
+            parts.push({ type: 'docx-attachment', name: file.name, data: fileData });
+        } else if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+            parts.push({ type: 'xlsx-attachment', name: file.name, data: fileData });
         } else {
-            // createCodeSummary는 이제 file.data (이미 읽은 텍스트 내용)를 받습니다.
-            const summary = createCodeSummary(file, file.data);
+            const summary = createCodeSummary(file, fileData);
             parts.push({ type: 'code-summary', summary: summary });
         }
     }
@@ -249,8 +248,8 @@ export function readFileAsPromise(file) {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result);
         reader.onerror = (error) => reject(error);
-        if (file.type === 'application/pdf' || file.type.startsWith('image/') || file.type.startsWith('audio/') || file.name.endsWith('.docx')) {
-            reader.readAsDataURL(file);
+        if (file.type === 'application/pdf' || file.type.startsWith('image/') || file.type.startsWith('audio/') || file.name.endsWith('.docx') || file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+         reader.readAsDataURL(file);
         } else {
             reader.readAsText(file);
         }

@@ -1,5 +1,5 @@
 🌙 README.md (완성본)
-# Gemini Local Chat — Mond Edition 🌙
+# Gemini Local Chat — Mond79 Edition 🌙
 
 이 버전은 [lemos999의 Gemini Local Chat Interface](https://github.com/lemos999/Gemini-Local-Chat-Interface)를 기반으로  
 다음 기능들이 추가된 **커스텀 로컬 AI 챗 인터페이스**입니다.
@@ -8,12 +8,15 @@
 
 ## ✨ 주요 변경 사항 (What's New)
 
-- 🎤 **음성 채팅 기능** (무료 음성 API 기반)
-- ☁️ **OpenWeather API 연동** (날씨 정보 표시)
-- 🗺️ **Kakao Map API 연동** (지도 / 위치 검색)
-- 🔍 **웹 검색 기능 (SERPAPI 연동)**
-- 🧩 **보안 강화:** `.env` 기반 API 키 관리
-- 🎨 **UI 및 구조 개선**
+- 🎥 **미디어 분석**	       (유튜브 영상 / 자막 분석 기능 (YouTube Transcript + Video Parsing))
+- 📄 **문서 리더**	           (PDF / TXT 뿐만 아니라 Word (.docx), Excel (.xlsx), 이미지 파일 분석 지원)
+- 🎤 **음성 채팅 업그레이드**  (Google Cloud TTS 기반 실시간 음성 응답)
+- 🌐 **웹 검색 강화**          (SERPAPI → 실제 사이트 접속 후 본문 스크래핑 (DOM Parser 기반))
+- 🧠 **기억 확장**	           (Local JSON + 브라우저 LocalStorage를 혼합한 세션 기억 구조)
+- 🧩 **보안 개선**	           (.env 기반 API 키 + axios proxy 보호 구조 유지)
+- ⚡ **8로컬 AI 프레임워크**	  (Google Gemini 2.5 Pro / Flash 모델 호환)
+- ☁️ **실시간 날씨 검색**      (날씨 정보 표시 , 위치 검색)
+
 
 ---
 
@@ -43,6 +46,8 @@ GEMINI_API_KEY=your_gemini_api_key_here
 SERPAPI_API_KEY=your_serpapi_key_here
 OPENWEATHER_API_KEY=your_openweather_api_key_here
 KAKAO_API_KEY=your_kakao_api_key_here
+GOOGLE_API_KEY=your_google_api_key_here
+
 
 
 ⚠️ .env는 절대 깃허브에 업로드하지 마세요!

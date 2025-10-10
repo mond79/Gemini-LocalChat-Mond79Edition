@@ -20,6 +20,7 @@ const puppeteer = require('puppeteer');
 const { YoutubeTranscript } = require('youtube-transcript');
 const { default: axios } = require('axios');
 const mammoth = require("mammoth");
+const XLSX = require('xlsx');
 
 // --- 2. 전역 변수 및 상수 설정 ---
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -391,6 +392,45 @@ async function processAttachmentsForAI(history) {
                 }
             }
             
+            // ==========================================================
+            // 새로운 Excel (.xlsx, .xls) 파일 처리 로직
+            // ==========================================================
+            else if (part.type === 'xlsx-attachment') {
+                try {
+                    console.log(`[Attachment Processor] XLSX 처리 중: ${part.name}`);
+                    const buffer = Buffer.from(part.data.split(',')[1], 'base64');
+
+                    // 1. xlsx 라이브러리로 버퍼 데이터를 읽습니다.
+                    const workbook = XLSX.read(buffer, {type: 'buffer'});
+                    let fullTextContent = '';
+
+                    // 2. 엑셀 파일의 모든 시트(Sheet)를 순회합니다.
+                    workbook.SheetNames.forEach(sheetName => {
+                        fullTextContent += `--- SHEET: ${sheetName} ---\n`;
+                        const worksheet = workbook.Sheets[sheetName];
+                        
+                        // 3. 시트의 데이터를 JSON 객체 배열로 변환합니다.
+                        const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+                        // 4. JSON 데이터를 AI가 이해하기 쉬운 텍스트 형식(CSV와 유사)으로 변환합니다.
+                        if (jsonData.length > 0) {
+                            const headers = Object.keys(jsonData[0]);
+                            fullTextContent += headers.join(', ') + '\n';
+                            jsonData.forEach(row => {
+                                const values = headers.map(header => row[header]);
+                                fullTextContent += values.join(', ') + '\n';
+                            });
+                        }
+                        fullTextContent += '\n';
+                    });
+
+                    return { type: 'text', text: `--- START OF SPREADSHEET (XLSX): ${part.name} ---\n\n${fullTextContent}\n--- END OF SPREADSHEET ---` };
+                } catch (error) {
+                    console.error('서버 측 XLSX 처리 오류:', error);
+                    return { type: 'text', text: `[XLSX 처리 실패: ${error.message}]` };
+                }
+            }
+            // ==========================================================
             // 그 외 다른 타입의 part는 그대로 반환합니다 (이미지, 오디오 등).
             return part;
         }));
