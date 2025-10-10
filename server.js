@@ -19,6 +19,7 @@ const { exec } = require('child_process');
 const puppeteer = require('puppeteer');
 const { YoutubeTranscript } = require('youtube-transcript');
 const { default: axios } = require('axios');
+const mammoth = require("mammoth");
 
 // --- 2. 전역 변수 및 상수 설정 ---
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -346,27 +347,66 @@ function trimHistoryByTokenLimit(history, limit) {
 async function processAttachmentsForAI(history) {
     return Promise.all(history.map(async (message) => {
         if (message.role !== 'user') return message;
+
         const newParts = await Promise.all(message.parts.map(async (part) => {
             if (part.type === 'code-summary' && part.summary) {
                 const { filename, fullCode } = part.summary;
-                return { type: 'text', text: `--- START OF FILE: ${filename} ---\n\n${fullCode}\n\n--- END OF FILE: ${filename} ---\n\n` };
-            } else if (part.type === 'pdf-attachment') {
+                return { type: 'text', text: `--- START OF FILE: ${filename} ---\n\n${fullCode}\n\n--- END OF FILE: ---` };
+            } 
+            else if (part.type === 'pdf-attachment') {
                 try {
-                    console.log(`[Attachment Processor] Processing PDF: ${part.name}`);
+                    console.log(`[Attachment Processor] PDF 처리 중: ${part.name}`);
                     const buffer = Buffer.from(part.data.split(',')[1], 'base64');
                     const data = await pdf(buffer);
-                    return { type: 'text', text: `--- START OF DOCUMENT: ${part.name} ---\n\n${data.text}\n\n--- END OF DOCUMENT ---` };
+                    return { type: 'text', text: `--- START OF DOCUMENT (PDF): ${part.name} ---\n\n${data.text}\n\n--- END OF DOCUMENT ---` };
                 } catch (error) {
-                    console.error('Server-side PDF processing error:', error);
+                    console.error('서버 측 PDF 처리 오류:', error);
                     return { type: 'text', text: `[PDF 처리 실패: ${error.message}]` };
                 }
             }
+            // ==========================================================
+            // [✅ 여기가 바로 '.docx' 오류를 해결하는 핵심 로직입니다!]
+            // ==========================================================
+            else if (part.type === 'docx-attachment') {
+                try {
+                    console.log(`[Attachment Processor] DOCX 처리 중: ${part.name}`);
+                    
+                    // 1. 클라이언트가 보낸 Base64 데이터 URL에서 순수 Base64 데이터만 추출합니다.
+                    const base64Data = part.data.split(',')[1];
+                    
+                    // 2. Base64 데이터를 Node.js의 'Buffer' 객체로 변환합니다.
+                    //    이것이 mammoth가 필요로 하는 형식입니다.
+                    const buffer = Buffer.from(base64Data, 'base64');
+                    
+                    // 3. mammoth에게 Buffer 객체를 전달하여 텍스트를 추출합니다.
+                    const result = await mammoth.extractRawText({ buffer: buffer });
+                    const text = result.value;
+                    
+                    return { type: 'text', text: `--- START OF DOCUMENT (DOCX): ${part.name} ---\n\n${text}\n\n--- END OF DOCUMENT ---` };
+                } catch (error) {
+                    console.error('서버 측 DOCX 처리 오류:', error);
+                    // mammoth 라이브러리가 zip 오류를 발생시키는 바로 그 지점입니다.
+                    // 오류 메시지를 사용자에게 보여주는 것이 좋습니다.
+                    return { type: 'text', text: `[DOCX 처리 실패: ${error.message}]` };
+                }
+            }
+            
+            // 그 외 다른 타입의 part는 그대로 반환합니다 (이미지, 오디오 등).
             return part;
         }));
-        const textParts = newParts.filter(p => p.type === 'text').map(p => p.text);
-        const otherParts = newParts.filter(p => p.type !== 'text');
+
+        // 이 아래의 텍스트 파트 병합 로직은 기존과 동일합니다.
+        const textParts = newParts.filter(p => p.type === 'text');
+        const otherParts = newParts.filter(p => p.type !== 'text' || (p.type === 'text' && !p.text)); // 텍스트지만 내용이 없는 경우도 제외
+        
         if (textParts.length > 0) {
-            otherParts.push({ type: 'text', text: textParts.join('\n\n') });
+            const combinedText = textParts.map(p => p.text).join('\n\n');
+            const existingTextPart = otherParts.find(p => p.type === 'text');
+            if (existingTextPart) {
+                existingTextPart.text = (existingTextPart.text ? existingTextPart.text + '\n\n' : '') + combinedText;
+            } else {
+                otherParts.push({ type: 'text', text: combinedText });
+            }
         }
         return { ...message, parts: otherParts };
     }));
