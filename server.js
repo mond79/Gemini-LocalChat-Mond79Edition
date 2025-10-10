@@ -21,6 +21,8 @@ const { YoutubeTranscript } = require('youtube-transcript');
 const { default: axios } = require('axios');
 const mammoth = require("mammoth");
 const XLSX = require('xlsx');
+const { google } = require('googleapis');
+const { formatISO, addDays, startOfDay, endOfDay } = require('date-fns');
 
 // --- 2. 전역 변수 및 상수 설정 ---
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -28,6 +30,18 @@ const SERPAPI_API_KEY = process.env.SERPAPI_API_KEY;
 const OPENWEATHER_API_KEY = process.env.OPENWEATHER_API_KEY;
 const KAKAO_API_KEY = process.env.KAKAO_API_KEY; 
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const REDIRECT_URI = 'http://localhost:3333/oauth2callback';
+
+// [✅ 새로운 부분] Google OAuth2 클라이언트 생성
+const oAuth2Client = new google.auth.OAuth2(
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET,
+    REDIRECT_URI
+);
+
+const TOKEN_PATH = path.join(__dirname, 'token.json'); // 토큰을 저장할 파일 경로
 
 const app = express();
 const port = 3333;
@@ -489,6 +503,150 @@ function formatHistoryForGoogleAI(history) {
 // [도구 9] 음악 분석 (파이썬 서버 호출) - 현재는 비활성화
 // async function analyzeMusic(...) { /* ... */ }
 
+async function authorize() {
+    try {
+        const tokenContent = await fs.readFile(TOKEN_PATH, 'utf-8');
+        const tokens = JSON.parse(tokenContent);
+        oAuth2Client.setCredentials(tokens);
+        
+        // 토큰이 만료되었는지 확인하고, 만료되었다면 새로고침
+        if (oAuth2Client.isTokenExpiring()) {
+            console.log('[Auth] 액세스 토큰이 만료되어 새로고침합니다...');
+            const { credentials } = await oAuth2Client.refreshAccessToken();
+            oAuth2Client.setCredentials(credentials);
+            await fs.writeFile(TOKEN_PATH, JSON.stringify(credentials));
+            console.log('[Auth] 새로고침된 토큰을 token.json에 저장했습니다.');
+        }
+        return oAuth2Client; // 인증된 클라이언트를 반환
+    } catch (error) {
+        // token.json 파일이 없거나 문제가 있으면 null 반환
+        return null;
+    }
+}
+
+// 캘린더 일정 조회
+async function getCalendarEvents({ timeMin, timeMax }) {
+    const auth = await authorize();
+    if (!auth) {
+        return "[AUTH_REQUIRED]Google 캘린더 인증이 필요합니다..."; // 인증이 안되어 있으면 다시 인증 신호 보냄
+    }
+    const calendar = google.calendar({ version: 'v3', auth });
+    try {
+        const res = await calendar.events.list({
+            calendarId: 'primary',
+            timeMin: timeMin || (new Date()).toISOString(),
+            timeMax: timeMax,
+            maxResults: 10,
+            singleEvents: true,
+            orderBy: 'startTime',
+        });
+
+        const events = res.data.items;
+        if (!events || events.length === 0) {
+            return '해당 기간에 예정된 이벤트가 없습니다.';
+        }
+        const eventList = events.map(event => {
+            const start = event.start.dateTime || event.start.date;
+            return `- ${event.summary} (시작: ${new Date(start).toLocaleString('ko-KR')})`;
+        }).join('\n');
+        return `[캘린더 조회 결과]\n${eventList}`;
+    } catch (err) {
+        return `캘린더 API 오류가 발생했습니다: ${err.message}`;
+    }
+}
+
+// 캘린더 일정 생성
+async function createCalendarEvent({ summary, description, startDateTime, endDateTime }) {
+    console.log('[Calendar] 일정 생성 도구 시작. 입력:', { summary, startDateTime, endDateTime });
+
+    const auth = await authorize();
+    if (!auth) {
+        console.log('[Calendar] 인증 실패. 인증 필요 신호 반환.');
+        return "[AUTH_REQUIRED]Google 캘린더 인증이 필요합니다...";
+    }
+
+    const calendar = google.calendar({ version: 'v3', auth });
+    
+    try {
+        const event = {
+            summary: summary,
+            description: description || `AI 비서를 통해 생성된 일정입니다.`,
+            start: { 
+                dateTime: startDateTime, 
+                timeZone: 'Asia/Seoul' // 한국 시간 기준
+            },
+            end: { 
+                dateTime: endDateTime, 
+                timeZone: 'Asia/Seoul' // 한국 시간 기준
+            },
+        };
+
+        console.log('[Calendar] Google에 보낼 이벤트 객체:', event);
+        console.log('[Calendar] Google Calendar API에 일정 생성을 요청합니다... (여기서 멈추면 Google과의 통신 문제)');
+
+        // 바로 이 부분이 실제 통신이 일어나는 곳입니다.
+        const res = await calendar.events.insert({
+            calendarId: 'primary',
+            resource: event,
+        });
+
+        console.log('[Calendar] Google로부터 응답을 받았습니다! 상태:', res.status);
+
+        // 성공적으로 응답을 받았다면, 결과 링크를 로그에 찍어봅니다.
+        if (res.data && res.data.htmlLink) {
+            console.log('[Calendar] 생성된 이벤트 링크:', res.data.htmlLink);
+        }
+
+        return `성공적으로 '${summary}' 일정을 캘린더에 추가했습니다. (시작: ${new Date(startDateTime).toLocaleString('ko-KR')})`;
+
+    } catch (err) {
+        // [✅ 중요!] 구글 서버가 보낸 실제 오류 메시지를 자세히 출력합니다.
+        console.error('!!!!!!!!!!! Google Calendar API 오류 발생 !!!!!!!!!!!');
+        if (err.response) {
+            console.error('상태 코드:', err.response.status);
+            console.error('오류 데이터:', JSON.stringify(err.response.data, null, 2));
+        } else {
+            console.error('일반 오류 메시지:', err.message);
+        }
+        console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+
+        return `캘린더에 일정을 추가하는 중 오류가 발생했습니다: ${err.response?.data?.error?.message || err.message}`;
+    }
+}
+
+// ['안내' 도구]
+function authorizeCalendar() {
+    // 이 함수는 실제 작업을 하지 않고, 클라이언트에게 인증 창을 열라는 '신호'만 보냅니다.
+    return "[AUTH_REQUIRED]Google 캘린더 인증이 필요합니다. 사용자를 /authorize 경로로 보내주세요.";
+}
+
+// [자연어를 ISO 날짜/시간으로 변환하는 전문가
+function convertNaturalDateToISO({ period }) {
+    console.log(`[Date Converter] 기간 변환 시도: ${period}`);
+    const now = new Date();
+    let start, end;
+
+    if (period.includes('오늘')) {
+        start = startOfDay(now);
+        end = endOfDay(now);
+    } else if (period.includes('내일')) {
+        const tomorrow = addDays(now, 1);
+        start = startOfDay(tomorrow);
+        end = endOfDay(tomorrow);
+    } else {
+        // 더 다양한 경우를 추가할 수 있습니다 (예: "이번 주")
+        return `오류: '${period}'는 이해할 수 없는 기간입니다. '오늘' 또는 '내일'을 사용해주세요.`;
+    }
+
+    // 결과를 JSON 문자열로 반환하여, AI가 이 결과를 다른 도구의 입력으로 쉽게 사용할 수 있도록 함
+    const result = {
+        timeMin: formatISO(start),
+        timeMax: formatISO(end)
+    };
+    console.log(`[Date Converter] 변환 결과:`, result);
+    return JSON.stringify(result);
+}
+
 // --- 4. 도구 목록(tools 객체) 생성 ---
 const tools = {
   getCurrentTime,
@@ -496,8 +654,11 @@ const tools = {
   getWeather,
   scrapeWebsite,
   getYoutubeTranscript,
+  authorizeCalendar,
   saveUserProfile,
   loadUserProfile,
+  getCalendarEvents,    
+  createCalendarEvent
   // analyzeMusic, // <-- 이 기능은 파이썬 서버를 켜야 하므로 일단 주석 처리
 };
 
@@ -629,17 +790,53 @@ app.post('/api/chat', async (req, res) => {
                   { name: 'getYoutubeTranscript', description: '사용자가 "youtube.com" 또는 "youtu.be" 링크를 제공하며 영상의 내용을 요약하거나 분석해달라고 요청할 때 사용합니다.', parameters: { type: 'object', properties: { url: { type: 'string', description: '스크립트를 추출할 정확한 유튜브 영상 주소 (URL)' } }, required: ['url'] } },
                   { name: 'saveUserProfile', description: '사용자가 자신에 대한 정보를 "기억해줘" 또는 "저장해줘" 라고 명시적으로 요청할 때 사용합니다.', parameters: { type: 'object', properties: { fact: { type: 'string', description: '기억해야 할 사용자에 대한 사실. 예: "나는 소고기를 좋아한다", "내 직업은 개발자다"' } }, required: ['fact'] } },
                   { name: 'loadUserProfile', description: '사용자가 "내가 누구인지 알아?", "나에 대해 아는 것 말해줘", "내가 어디 산다고 했지?" 와 같이 자신에 대해 AI가 기억하는 정보를 물어볼 때 사용합니다.', parameters: { type: 'object', properties: {} } },
-                  { name: 'getWeather', description: '특정 주소나 지역의 정확한 실시간 날씨 정보를 가져옵니다. "창원시 성산구 상남동"처럼 아주 상세한 주소도 가능합니다.', parameters: { type: 'object', properties: { address: { type: 'string', description: '날씨를 조회할 전체 주소 또는 지역 이름. 예: "부산시 해운대구"' } }, required: ['address'] } }
+                  { name: 'getWeather', description: '특정 주소나 지역의 정확한 실시간 날씨 정보를 가져옵니다. "창원시 성산구 상남동"처럼 아주 상세한 주소도 가능합니다.', parameters: { type: 'object', properties: { address: { type: 'string', description: '날씨를 조회할 전체 주소 또는 지역 이름. 예: "부산시 해운대구"' } }, required: ['address'] } },
+                  { name: 'authorizeCalendar', description: '사용자가 "캘린더 연동", "구글 계정 연결" 등 처음으로 캘린더 관련 작업을 요청했지만, 아직 인증되지 않았을 때 사용합니다.', parameters: { type: 'object', properties: {} } },
+                  { name: 'getCalendarEvents', description: '사용자의 구글 캘린더에서 특정 기간의 일정을 조회할 때 사용합니다. "오늘 내 일정 뭐야?", "내일 약속 있어?" 와 같은 질문에 사용됩니다.', parameters: { type: 'object', properties: {
+                          timeMin: { type: 'string', description: '조회 시작 시간 (ISO 8601 형식). 지정하지 않으면 현재 시간부터 조회. 예: 2025-10-12T00:00:00Z' },
+                          timeMax: { type: 'string', description: '조회 종료 시간 (ISO 8601 형식). 예: 2025-10-12T23:59:59Z' } }, required: [] } },
+                { name: 'createCalendarEvent', description: '사용자의 구글 캘린더에 새로운 일정을 추가할 때 사용합니다. "내일 3시에 미팅 잡아줘" 와 같은 요청에 사용됩니다.', parameters: { type: 'object',properties: {
+                          summary: { type: 'string', description: '이벤트의 제목. 예: "팀 프로젝트 미팅"' },
+                          description: { type: 'string', description: '이벤트에 대한 상세 설명 (선택 사항)' },
+                          startDateTime: { type: 'string', description: '이벤트 시작 시간 (ISO 8601 형식). 예: 2025-10-12T15:00:00' },
+                          endDateTime: { type: 'string', description: '이벤트 종료 시간 (ISO 8601 형식). 예: 2025-10-12T16:00:00' } }, required: ['summary', 'startDateTime', 'endDateTime'] } },
+                  { name: 'convertNaturalDateToISO', description: '사용자가 "오늘", "내일"과 같은 자연어로 기간을 언급했을 때, 그 기간을 다른 도구(예: getCalendarEvents)가 사용할 수 있는 정확한 ISO 8601 형식의 timeMin과 timeMax로 변환합니다.', parameters: { type: 'object', properties: { period: { type: 'string', description: '변환할 자연어 기간. 예: "오늘", "내일"' } }, required: ['period'] } }
                 ]
               }
             ]
         });
 
         let historyForAI = [...conversationHistory];
-        if (systemPrompt && systemPrompt.trim() !== '' && conversationHistory.length === 1) {
-            historyForAI.unshift(
-                { role: 'user', parts: [{ type: 'text', text: systemPrompt }] },
-                { role: 'model', parts: [{ type: 'text', text: '알겠습니다. 이제부터 당신의 지시에 따라 응답하겠습니다.' }] }
+
+        // [✅ 최종 수정] AI에게 모든 도구의 존재를 명확하게 각인시키는 시스템 프롬프트
+        const toolsSystemPrompt = `
+You are an AI assistant with access to a suite of tools. When a user asks a question, first determine if any of your tools can help.
+
+Available Tools:
+- getCurrentTime(): Get the current date and time. Use for questions about "지금 시간", "오늘 날짜".
+- searchWeb({query}): Search the web. Use for news, general knowledge, etc.
+- scrapeWebsite({url}): Read the content of a specific webpage URL. Use when a URL is provided.
+- getYoutubeTranscript({url}): Get the transcript of a YouTube video. Use for YouTube URLs.
+- saveUserProfile({fact}): Save a fact about the user. Use when the user says "기억해줘".
+- loadUserProfile(): Load saved facts about the user. Use when the user asks "내가 누구야?", "나에 대해 아는 것".
+- getCalendarEvents({timeMin, timeMax}): Get events from the user's Google Calendar. Use for questions about "일정", "약속", "캘린더".
+- createCalendarEvent({summary, startDateTime, endDateTime}): Create a new event in the user's Google Calendar. Use for requests to "일정 추가", "약속 잡아줘".
+- authorizeCalendar(): Start the Google Calendar authorization process if not already authenticated. Use when calendar tools fail due to authentication.
+- "If a user asks for calendar events using natural language like "today" or "tomorrow", you MUST first call convertNaturalDateToISO to get the correct timeMin and timeMax, and then use that result to call getCalendarEvents."
+
+Analyze the user's request and call the most appropriate tool with the correct parameters. If no tool is suitable, answer directly.
+        `;
+
+        // 기존의 사용자 시스템 프롬프트와, 우리가 만든 '도구 시스템 프롬프트'를 합칩니다.
+        const combinedSystemPrompt = (systemPrompt && systemPrompt.trim() !== '') 
+            ? `${systemPrompt}\n\n---\n\n${toolsSystemPrompt}`
+            : toolsSystemPrompt;
+
+        // 시스템 프롬프트는 항상 대화의 맨 처음에 위치해야 합니다.
+        if (conversationHistory.length === 1) { // 새 대화일 때만
+             historyForAI.unshift(
+                { role: 'user', parts: [{ type: 'text', text: combinedSystemPrompt }] },
+                { role: 'model', parts: [{ type: 'text', text: '알겠습니다. 당신의 지시에 따라, 제공된 도구들을 활용하여 최선을 다해 돕겠습니다.' }] }
             );
         }
         
@@ -741,6 +938,41 @@ app.post('/api/chat', async (req, res) => {
         const sanitizedErrorMessage = errorMessage.replace(/[^\x20-\x7E\w\sㄱ-ㅎㅏ-ㅣ가-힣.:,()]/g, '');
 
         res.status(500).json({ message: sanitizedErrorMessage });
+    }
+});
+
+// 인증 시작 (Python의 /authorize 역할)
+app.get('/authorize', (req, res) => {
+    // 사용자가 구글에 로그인하고, 우리 앱에 캘린더 접근 권한을 주도록 요청하는 URL 생성
+    const authUrl = oAuth2Client.generateAuthUrl({
+        access_type: 'offline',
+        scope: ['https://www.googleapis.com/auth/calendar.events'] // 업무 범위
+    });
+    // 사용자를 생성된 URL로 보냅니다.
+    res.redirect(authUrl);
+});
+
+// 인증 후 콜백 (Python의 /oauth2callback 역할)
+app.get('/oauth2callback', async (req, res) => {
+    const code = req.query.code; // 구글이 보내준 '임시 출입증(code)'
+    if (!code) {
+        return res.status(400).send('인증 코드가 없습니다.');
+    }
+    try {
+        // 임시 출입증을 진짜 '단골 카드(토큰)'로 교환
+        const { tokens } = await oAuth2Client.getToken(code);
+        oAuth2Client.setCredentials(tokens);
+
+        // 발급받은 토큰을 나중에도 쓸 수 있도록 token.json 파일에 저장
+        await fs.writeFile(TOKEN_PATH, JSON.stringify(tokens));
+        console.log('[Auth] 토큰이 token.json 파일에 성공적으로 저장되었습니다.');
+        
+        // 모든 과정이 끝났으니, 사용자에게 성공 메시지를 보여주고 창을 닫게 함
+        res.send('<script>window.close();</script><h2>인증에 성공했습니다! 이 창을 닫아주세요.</h2>');
+
+    } catch (error) {
+        console.error('[Auth] 토큰 교환 중 오류 발생:', error);
+        res.status(500).send('인증에 실패했습니다.');
     }
 });
 

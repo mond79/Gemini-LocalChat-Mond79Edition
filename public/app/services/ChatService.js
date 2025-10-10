@@ -109,6 +109,23 @@ async function executeChat(sessionId, signal) {
         const keyIdentifier = getApiKeyIdentifier(apiResponse.usedApiKey);
         Session.recordApiUsage(appState, sessionId, session.model, apiResponse.usage, keyIdentifier);
         const fullResponseText = apiResponse.reply.text;
+        // ==========================================================
+        // AI의 답변이 '인증 신호'인지 확인합니다.
+        // ==========================================================
+        if (fullResponseText.startsWith('[AUTH_REQUIRED]')) {
+            // '인증이 필요합니다' 라는 메시지를 채팅창에 표시
+            Toast.show('Google 캘린더 인증이 필요합니다. 인증 창을 엽니다.');
+            
+            // 새로운 팝업 창으로 /authorize 경로를 엽니다.
+            window.open('/authorize', 'GoogleAuth', 'width=600,height=700');
+
+            // AI의 응답 자체는 채팅 기록에 추가하지 않고, 시스템 메시지로 대체할 수 있습니다.
+            const authMessage = Session.addMessage(appState, sessionId, 'system', [{ type: 'text', text: 'Google 캘린더 인증을 시작합니다...' }]);
+            ChatContainer.appendMessage(sessionId, authMessage);
+            // 여기서 함수를 종료합니다.
+            return; 
+        }
+        
         const thinkingTime = Date.now() - (appState.loadingStates[sessionId]?.startTime || Date.now());
         const metadata = { thinkingTime, modelUsed: session.model, completionTimestamp: Date.now(), receivedAt: Date.now() };
         const newMessage = Session.addMessage(appState, sessionId, 'model', [{ type: 'text', text: fullResponseText }], metadata);

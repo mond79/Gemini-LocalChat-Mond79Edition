@@ -40,7 +40,21 @@ function renderMessageParts(parts, role, receivedAt) {
                     if (role === 'model' && receivedAt) {
                         // Typing simulation will populate this.
                     } else {
-                        const rawHtml = window.marked.parse(part.text);
+                        let rawText = part.text;
+
+                        // [✅ 최종 수정] AI가 어떤 키워드를 사용하든 감지하도록 검문소를 업그레이드합니다.
+                        if (role === 'model' && (rawText.includes('구글 캘린더 연동하기') || rawText.includes('/authorize'))) {
+                            
+                            // AI가 만든 친절한 설명은 그대로 사용하고, 링크 부분만 바꿔치기 합니다.
+                            const authLink = `<a href="/authorize" target="_blank" class="auth-link">여기를 클릭하여 인증하세요.</a>`;
+                            
+                            // AI가 만든 "/authorize" 텍스트나 다른 링크를 우리가 만든 안전한 링크로 교체합니다.
+                            rawText = "OK. 구글 캘린더를 연결하겠습니다. 먼저 접근 권한을 부여해야 합니다. 아래 링크를 방문하여 권한을 부여해주세요:\n\n" + authLink;
+                            
+                            console.log('[Link Interceptor] 인증 링크를 감지하고 /authorize 경로로 수정했습니다.');
+                        }
+
+                        const rawHtml = window.marked.parse(rawText);
                         const sanitizedHtml = window.DOMPurify.sanitize(rawHtml);
                         partContent.innerHTML = CodeBlock.enhance(sanitizedHtml);
                     }
