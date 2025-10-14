@@ -23,6 +23,7 @@ const mammoth = require("mammoth");
 const XLSX = require('xlsx');
 const { google } = require('googleapis');
 const { formatISO, addDays, startOfDay, endOfDay } = require('date-fns');
+const cron = require('node-cron');
 
 // --- 2. 전역 변수 및 상수 설정 ---
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -1057,7 +1058,7 @@ async function searchAndGetImageAsBase64({ query }) {
 
 // ['슈퍼 도구' 함수를 추가]
 async function getDailyBriefing() {
-    console.log('[Function Executed] getDailyBriefing 실행됨');
+    console.log('[Function Executed] getDailyBriefing 실행됨 (업그레이드 버전)');
     
     try {
         const now = new Date();
@@ -1076,9 +1077,31 @@ async function getDailyBriefing() {
             newsPromise
         ]);
 
-        // 3. 수집된 모든 정보를 하나의 보고서 형태로 묶음
+        // [✅ 핵심 업그레이드] 밤새 준비한 관심사 보고서가 있는지 확인하고 추가합니다.
+        let interestReportSummary = '';
+        const briefingsDir = path.join(__dirname, 'briefings');
+        try {
+            const today = new Date().toISOString().split('T')[0]; // 오늘 날짜 (YYYY-MM-DD)
+            const files = await fs.readdir(briefingsDir);
+            // 오늘 날짜로 시작하는 파일들만 필터링합니다.
+            const todayFiles = files.filter(f => f.startsWith(today));
+            
+            if (todayFiles.length > 0) {
+                const interestTopics = todayFiles.map(f => 
+                    // 파일명에서 오늘 날짜와 확장자를 제거하여 관심사 주제를 추출합니다.
+                    f.replace(`${today}_`, '').replace('.txt', '').replace(/_/g, ' ')
+                );
+                // 추출된 관심사 주제들을 보기 좋게 정리합니다.
+                interestReportSummary = `\n[관심사 리포트]\n밤사이 당신의 관심사인 '${interestTopics.join(', ')}'에 대한 새로운 소식을 요약해 두었습니다. 확인하시겠습니까?`;
+            }
+        } catch (e) {
+            // 'briefings' 폴더가 없거나 파일이 없어도 오류 없이 다음 단계로 진행합니다.
+            console.log('[Briefing] No interest reports found for today.');
+        }
+
+        // 3. 수집된 모든 정보를 하나의 보고서 형태로 묶습니다.
         const briefingData = `
-        --- 오늘의 브리핑 데이터 ---
+        --- 오늘의 브리핑 ---
         [캘린더]
         ${calendarResult}
 
@@ -1087,7 +1110,8 @@ async function getDailyBriefing() {
 
         [주요 뉴스]
         ${newsResult}
-        --- 데이터 끝 ---
+        ${interestReportSummary}
+        --- 브리핑 끝 ---
         `;
         // 4. AI가 이 데이터를 보고 멋지게 요약해서 말할 수 있도록 전달
         return briefingData;
@@ -1250,13 +1274,19 @@ async function autonomousResearcher({ topic, output_format }, modelName) {
         // [텍스트 보고서 생성 로직]
         console.log(`[Autonomous Researcher] 6. Asking AI to synthesize the final TEXT report...`);
         const synthesisPrompt = `
-            당신은 전문 보고서 작성가입니다. 당신의 임무는 아래에 제공된 여러 개의 원본 조사 데이터를 종합하여, "${topic}"이라는 주제에 대한 하나의 통일성 있고 잘 정리된 최종 보고서를 작성하는 것입니다.
-            제공된 데이터를 주요 정보원으로 사용하세요. 보고서는 명확한 제목, 서론, 본론, 결론의 구조를 갖추어야 합니다. 본론은 소제목이나 글머리 기호를 사용하여 가독성을 높여주세요.
-            단순히 조사 결과를 나열하지 말고, 정보들을 논리적으로 연결하여 하나의 완성된 글로 만들어야 합니다.
+            당신은 뛰어난 요약 능력을 가진 AI입니다. 당신의 임무는 아래 제공된 다양한 출처의 조사 데이터를 종합하여, "${topic}"에 대한 하나의 명확하고 간결한 텍스트 요약 보고서를 작성하는 것입니다.
+
+            **핵심 지침:**
+            1.  **간결함:** 핵심 정보 위주로, 불필요한 내용은 과감히 생략하여 전체적인 길이를 짧게 유지하세요.
+            2.  **명확성:** 소제목이나 글머리 기호를 사용하여 정보를 명확하게 구분하고 가독성을 높이세요.
+            3.  **핵심 집중:** 모든 조사 결과를 망라하는 것이 아니라, "${topic}"의 가장 중요한 측면에 집중하여 요약하세요.
+            4.  **문체:** 전문적이고 정보 전달에 효과적인 문체를 사용하세요.
+
             --- 원본 조사 데이터 ---
             ${researchData}
             --- 데이터 끝 ---
-            이제, 최종 보고서를 한국어로 작성해주세요.
+
+            이제, 위 데이터를 바탕으로 "${topic}"에 대한 텍스트 요약 보고서를 한국어로 작성해주세요.
         `;
         
         const finalResult = await model.generateContent(synthesisPrompt);
@@ -1270,6 +1300,31 @@ async function autonomousResearcher({ topic, output_format }, modelName) {
     console.error('[Autonomous Researcher] Error during the entire process:', error);
     return `죄송합니다. 자동 보고서 생성 중에 오류가 발생했습니다: ${error.message}`;
   }
+}
+
+async function addInterest({ topic }) {
+    console.log(`[Profile] Adding new interest: ${topic}`);
+    try {
+        const profile = JSON.parse(await fs.readFile(userProfilePath, 'utf-8'));
+        if (!profile.interests) profile.interests = []; // interests 배열이 없으면 새로 생성
+        if (!profile.interests.includes(topic)) {
+            profile.interests.push(topic);
+            await fs.writeFile(userProfilePath, JSON.stringify(profile, null, 2));
+            return `'${topic}'을(를) 당신의 새로운 관심사로 기억하겠습니다.`;
+        }
+        return `이미 알고 있는 관심사입니다.`;
+    } catch (error) { /* ... 오류 처리 ... */ }
+}
+
+async function listInterests() {
+    console.log(`[Profile] Listing interests...`);
+    try {
+        const profile = JSON.parse(await fs.readFile(userProfilePath, 'utf-8'));
+        if (profile.interests && profile.interests.length > 0) {
+            return `현재 기억하고 있는 당신의 관심사는 다음과 같습니다:\n- ${profile.interests.join('\n- ')}`;
+        }
+        return '아직 기억하고 있는 관심사가 없습니다.';
+    } catch (error) { /* ... 오류 처리 ... */ }
 }
 // --- 4. 도구 목록(tools 객체) 생성 ---
 const tools = {
@@ -1293,6 +1348,8 @@ const tools = {
   getDailyBriefing,
   executeMultipleCommands,
   autonomousResearcher,
+  addInterest,
+  listInterests
   // analyzeMusic, // <-- 이 기능은 파이썬 서버를 켜야 하므로 일단 주석 처리
 };
 
@@ -1858,6 +1915,55 @@ app.post('/api/create-presentation', async (req, res) => {
     }
 });
 
+// ["매일 아침 7시에 이 코드를 실행하라"는 스케줄을 등록합니다.
+cron.schedule('0 7 * * *', async () => { // 테스트를 위해 '매 1분마다'로 유지
+    console.log('[Cron Job] 프로그램 실행: 자동 리서치 작업을 시작합니다...');
+    try {
+        // [파일 존재 여부를 먼저 확인하여 안정성 확보
+        try {
+            await fs.access(userProfilePath); 
+        } catch (e) {
+            console.log('[Cron Job] user_profile.json 파일이 없어서 작업을 건너뜁니다.');
+            return; // 프로필 파일이 없으면 아예 작업을 시작하지 않음
+        }
+
+        const profileContent = await fs.readFile(userProfilePath, 'utf-8');
+        const profile = JSON.parse(profileContent);
+        
+        // [관심사 목록이 실제로 있고, 비어있지 않은지 명확하게 확인
+        if (profile.interests && Array.isArray(profile.interests) && profile.interests.length > 0) {
+            
+            // for...of 루프는 한 번에 하나씩 실행하여 안정적입니다.
+            for (const interest of profile.interests) {
+                // 이 로그가 찍히는지 확인하는 것이 가장 중요합니다!
+                console.log(`[Cron Job] 관심사 "${interest}"에 대한 조사를 시작합니다.`);
+
+                // '자율적 연구원'을 텍스트 모드로 자동 실행
+                // [✅ 핵심 수정 3] 가장 빠르고 저렴한 모델을 명시적으로 사용
+                const report = await autonomousResearcher({ topic: interest, output_format: 'text' }, 'gemini-2.5-flash'); 
+                
+                const briefingsDir = path.join(__dirname, 'briefings');
+                await fs.mkdir(briefingsDir, { recursive: true });
+                
+                const today = new Date().toISOString().split('T')[0];
+                // 파일명에 포함될 수 없는 문자를 안전하게 처리 (예: '/')
+                const safeInterest = interest.replace(/[\/\\?%*:|"<>]/g, '-');
+                const reportPath = path.join(briefingsDir, `${today}_${safeInterest.replace(/ /g, '_')}.txt`);
+                
+                await fs.writeFile(reportPath, report);
+                console.log(`[Cron Job] "${interest}"에 대한 조사 보고서를 저장했습니다: ${reportPath}`);
+            }
+        } else {
+            console.log('[Cron Job] 추적할 관심사가 없어서 작업을 종료합니다.');
+        }
+
+    } catch (error) {
+        console.error('[Cron Job] 자동 리서치 작업 중 치명적인 오류 발생:', error);
+    }
+}, {
+    scheduled: true,
+    timezone: "Asia/Seoul"
+});
 // --- 7. 서버 실행 (가장 마지막에!) ---
 try {
     const key = fsSync.readFileSync('localhost-key.pem');
