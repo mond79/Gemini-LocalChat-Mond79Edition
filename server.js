@@ -1495,6 +1495,65 @@ app.post('/api/chat', async (req, res) => {
 
             // [✅ 핵심 수정] AI 호출이 없었으므로, 토큰 사용량은 0으로 설정하여 응답합니다.
             const usageMetadata = { promptTokenCount: 0, candidatesTokenCount: 0, totalTokenCount: 0 };
+            // [✅ 궁극의 진화] 대화 내용 자동 학습 및 프로필 업데이트 로직
+// -----------------------------------------------------------------
+    try {
+        const profile = JSON.parse(await fs.readFile(user_profile.json, 'utf-8'));
+        const conversationText = conversationHistory
+            .map(m => `${m.role}: ${m.parts.map(p => p.text).join('')}`)
+            .join('\n');
+
+        const learningPrompt = `
+            You are a sharp and insightful Profile Analyst AI. Your mission is to analyze the [Recent Conversation] and identify if the user has revealed any new, certain, and meaningful information about themselves that is not already in their [Current User Profile].
+
+            Based on the conversation, identify ONLY ONE piece of new information related to the user's identity(name, role), preferences(likes, dislikes), or goals(current_tasks, long_term).
+            Then, suggest ONE SINGLE function call to update the user's profile using the available tools.
+            
+            Available Tools:
+            - rememberIdentity({key: "name" | "role", value: "string"})
+            - rememberPreference({type: "likes" | "dislikes", item: "string"})
+            - rememberGoal({type: "current_tasks" | "long_term", goal: "string"})
+
+            Example:
+            - If user says "My name is Mond", suggest: rememberIdentity({key: "name", value: "Mond"})
+            - If user says "I really hate bugs", suggest: rememberPreference({type: "dislikes", item: "bugs"})
+            - If user says "My goal this year is to learn guitar", suggest: rememberGoal({type: "long_term", goal: "learn guitar"})
+
+            IMPORTANT RULES:
+            1. Only learn factual and certain information. Do not infer or guess.
+            2. If no new, certain information is found, you MUST respond with the single word: "NO_UPDATE".
+            3. Your response must be ONLY the function call or "NO_UPDATE". Do not add any other text.
+
+            [Current User Profile]:
+            ${JSON.stringify(profile, null, 2)}
+
+            [Recent Conversation]:
+            ${conversationText}
+
+            Now, suggest a function call to update the profile, or respond with "NO_UPDATE".
+        `;
+
+        // 자기 자신에게 다시 한번 질문을 던져 학습할 내용을 찾아냅니다.
+        // 이 작업은 배경에서 일어나므로, 빠르고 저렴한 모델을 사용하는 것이 좋습니다.
+        const learningModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+        const learningResult = await learningModel.generateContent(learningPrompt);
+        const suggestedCallText = learningResult.response.text();
+
+        if (suggestedCallText && !suggestedCallText.includes("NO_UPDATE")) {
+            console.log(`[AI Learning] Found new information to learn. Suggested update: ${suggestedCallText}`);
+            
+            // (향후 과제) 여기서 실제로 제안된 함수 호출을 파싱하고 실행하는 로직을 추가할 수 있습니다.
+            // 예를 들어, 정규식을 사용해 함수 이름과 인자를 추출하고, tools[functionName](args)를 호출합니다.
+            // 지금은 안전을 위해 콘솔에 로그만 남깁니다.
+
+        } else {
+            console.log('[AI Learning] No new information to learn from this conversation.');
+        }
+
+    } catch (learningError) {
+        console.error('[AI Learning] An error occurred during the self-learning process:', learningError);
+    }
+    // -----------------------------------------------------------------
             res.json({ reply: finalReply, chatId: chatId, usage: usageMetadata });
             return; // 함수를 여기서 종료합니다.
         }
