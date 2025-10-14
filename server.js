@@ -908,6 +908,89 @@ async function _actuallyExecuteCommand(command) {
     });
 }
 
+// [새로운 기억 저장 전담 함수]
+async function saveMemory(conversationHistory, chatId, genAI, mainModelName) {
+    console.log('[메모리 저장 1/5] 기억 저장 절차를 시작합니다.');
+    
+    // [효율성] 평소에 사용할 빠르고 저렴한 요약 전용 모델 이름
+    const preferredSummarizerModel = 'gemini-2.5-flash';
+
+    try {
+        if (!conversationHistory || conversationHistory.length < 2) {
+            return;
+        }
+
+        const conversationText = conversationHistory
+            .map(m => `${m.role}: ${m.parts.map(p => p.type === 'text' ? p.text : `(${p.type})`).join(' ')}`)
+            .join('\n');
+        
+        const summarizationPrompt = `다음 대화의 핵심 주제나 가장 중요한 정보를 한국어로 된 한 문장으로 요약해줘. 이 요약은 AI의 장기 기억으로 사용될 거야. 무엇이 논의되었거나 결정되었는지에 초점을 맞춰줘. 대화: ${conversationText}`;
+
+        // --- 1차 시도: 평소 사용하던 요약 모델로 실행 ---
+        console.log(`[메모리 저장 3/5] 1차 시도: '${preferredSummarizerModel}' 모델로 요약을 요청합니다...`);
+        let summarizationModel = genAI.getGenerativeModel({ model: preferredSummarizerModel });
+        let summaryResult = await summarizationModel.generateContent(summarizationPrompt);
+        let summaryText = summaryResult.response?.text().trim() || '';
+
+        console.log('[메모리 저장 4/5] AI로부터 다음 요약을 받았습니다:', summaryText);
+
+        // --- 파일 저장 로직 (공통) ---
+        if (summaryText) {
+            const newMemory = {
+                timestamp: new Date().toISOString(),
+                summary: summaryText,
+                chatId: chatId
+            };
+
+            memoryDB.memories.push({ timestamp: new Date().toISOString(), summary: summaryText, chatId: chatId });
+            // [✅ 1. 즉시 메모리에 반영]
+            memoryCache.push(newMemory);
+            console.log(`[메모리 저장] 성공! 새로운 기억을 메모리에 추가했습니다. (현재 ${memoryCache.length}개)`);
+
+            // [✅ 2. 백그라운드에서 파일에 저장]
+            const dataToSave = JSON.stringify({ memories: memoryCache }, null, 2);
+            await fs.writeFile('long_term_memory.json', dataToSave, 'utf-8');
+            console.log('[파일 저장] 메모리의 모든 내용을 파일에 안전하게 저장했습니다.');
+        } else {
+            console.log('[메모리 저장] AI가 생성한 요약이 비어있어 저장을 건너뜁니다.');
+        }
+
+    } catch (error) {
+        // [✅ 오류 발생 시, 메모리 롤백] - 데이터 정합성을 위해 방금 추가한 기억을 제거
+        memoryCache.pop(); 
+        console.error('[파일 저장 실패!] 파일 저장 중 오류가 발생하여 메모리를 이전 상태로 되돌립니다.');
+
+        try {
+            // --- 2차 시도: 메인 채팅에서 사용한 모델로 실행 ---
+            const conversationText = conversationHistory.map(m => `${m.role}: ${m.parts.map(p => p.text || '').join(' ')}`).join('\n');
+            const summarizationPrompt = `다음 대화의 핵심 주제를 한 문장으로 요약해줘: ${conversationText}`;
+            
+            let fallbackModel = genAI.getGenerativeModel({ model: mainModelName });
+            let fallbackResult = await fallbackModel.generateContent(summarizationPrompt);
+            let fallbackSummaryText = fallbackResult.response?.text().trim() || '';
+
+            // --- 파일 저장 로직 (2차 시도 성공 시) ---
+            if (fallbackSummaryText) {
+                console.log('[메모리 저장 4/5 - 2차 성공] AI로부터 다음 요약을 받았습니다:', fallbackSummaryText);
+                // ... (파일 저장 로직 반복) ...
+                let memoryDB = { memories: [] };
+                try {
+                    const fileContent = await fs.readFile('long_term_memory.json', 'utf-8');
+                    if (fileContent) memoryDB = JSON.parse(fileContent);
+                } catch (e) { /* 파일이 없어도 괜찮음 */ }
+                if (!Array.isArray(memoryDB.memories)) memoryDB.memories = [];
+
+                memoryDB.memories.push({ timestamp: new Date().toISOString(), summary: fallbackSummaryText, chatId: chatId });
+                await fs.writeFile('long_term_memory.json', JSON.stringify(memoryDB, null, 2));
+                console.log('[메모리 저장 5/5] 성공! (예비 모델 사용) 새로운 기억을 long_term_memory.json 파일에 저장했습니다.');
+            }
+        } catch (fallbackError) {
+            console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+            console.error('[메모리 저장 최종 실패!] 예비 모델로도 기억 생성에 실패했습니다:', fallbackError.message);
+            console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+        }
+    }
+}
 // 좀 더 업그레이드 한 PPTX 프레젠테이션 파일 생성
 async function createPresentation({ jsonString, title }) {
     console.log(`[PPT Gen] JSON 구조 기반 프레젠테이션 생성 시작...`);
@@ -1369,6 +1452,27 @@ async function listInterests() {
         return '아직 기억하고 있는 관심사가 없습니다.';
     } catch (error) { /* ... 오류 처리 ... */ }
 }
+
+// [✅ 1단계] 앱 전체에서 사용할 '메모리 캐시' 변수를 만듭니다.
+let memoryCache = []; 
+
+// [✅ 2단계] 앱이 시작될 때 딱 한 번만 파일을 읽어 메모리에 저장하는 함수를 만듭니다.
+async function loadInitialMemory() {
+    try {
+        const fileContent = await fs.readFile('long_term_memory.json', 'utf-8');
+        const data = JSON.parse(fileContent);
+        if (data.memories && Array.isArray(data.memories)) {
+            memoryCache = data.memories;
+            console.log(`[Long-Term Memory] 성공! ${memoryCache.length}개의 기억을 메모리로 불러왔습니다.`);
+        }
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            console.log('[Long-Term Memory] long_term_memory.json 파일이 없어 빈 메모리로 시작합니다.');
+        } else {
+            console.error('[Long-Term Memory] 초기 기억을 불러오는 중 오류 발생:', error);
+        }
+    }
+}
 // --- 4. 도구 목록(tools 객체) 생성 ---
 const tools = {
   getCurrentTime,
@@ -1494,7 +1598,7 @@ app.post('/api/chat', async (req, res) => {
             await fs.writeFile(chatFilePath, JSON.stringify(conversationHistory, null, 2));
 
             // [✅ 핵심 수정] AI 호출이 없었으므로, 토큰 사용량은 0으로 설정하여 응답합니다.
-            const usageMetadata = { promptTokenCount: 0, candidatesTokenCount: 0, totalTokenCount: 0 };
+            saveMemory(conversationHistory, chatId, genAI, modelName);
             // [✅ 궁극의 진화] 대화 내용 자동 학습 및 프로필 업데이트 로직
 // -----------------------------------------------------------------
     try {
@@ -1553,7 +1657,44 @@ app.post('/api/chat', async (req, res) => {
     } catch (learningError) {
         console.error('[AI Learning] An error occurred during the self-learning process:', learningError);
     }
-    // -----------------------------------------------------------------
+    
+        // =================================================================
+        // [✅ 수정 위치 2] 여기에도 기억 저장 로직을 똑같이 추가합니다.
+        // =================================================================
+        try {
+            if (conversationHistory.length >= 2) {
+                const conversationText = conversationHistory
+                    .map(m => `${m.role}: ${m.parts.map(p => p.type === 'text' ? p.text : `(${p.type})`).join(' ')}`)
+                    .join('\n');
+
+                const summarizationPrompt = `다음 대화의 핵심 주제나 가장 중요한 정보를 한국어로 된 한 문장으로 요약해줘. 이 요약은 AI의 장기 기억으로 사용될 거야. 무엇이 논의되었거나 결정되었는지에 초점을 맞춰줘. 대화: ${conversationText}`;
+                
+                const summarizationModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+                const summaryResult = await summarizationModel.generateContent(summarizationPrompt);
+                const summaryText = summaryResult.response.text().trim();
+
+                if (summaryText) {
+                    console.log(`[Long-Term Memory] 새로운 기억 생성 (명령 확인): ${summaryText}`);
+                    let memoryDB = { memories: [] };
+                    try {
+                        memoryDB = JSON.parse(await fs.readFile('long_term_memory.json', 'utf-8'));
+                    } catch (e) {
+                        console.log('[Long-Term Memory] 기존 메모리 파일이 없어 새로 생성합니다.');
+                    }
+                    
+                    memoryDB.memories.push({
+                        timestamp: new Date().toISOString(),
+                        summary: summaryText,
+                        chatId: chatId
+                    });
+                    await fs.writeFile('long_term_memory.json', JSON.stringify(memoryDB, null, 2));
+                }
+            }
+        } catch (memoryError) {
+            console.error('[Long-Term Memory] 기억 생성 중 오류 발생 (명령 확인):', memoryError);
+        }
+        // =================================================================
+
             res.json({ reply: finalReply, chatId: chatId, usage: usageMetadata });
             return; // 함수를 여기서 종료합니다.
         }
@@ -1685,6 +1826,41 @@ app.post('/api/chat', async (req, res) => {
         }
         
         const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+
+        let historyForAI = [...conversationHistory];
+
+        // [✅ 장기 기억 회상] (개선 버전: '최근 기억'을 직접 주입하는 방식)
+        try {
+            // [✅ 1. 복잡한 관련성 검사 AI 호출을 모두 제거합니다.]
+
+            // [✅ 2. 파일 대신, 메모리에 있는 memoryCache를 직접 사용합니다.]
+            if (memoryCache && memoryCache.length > 0) {
+                
+                // [✅ 3. 가장 최근의 기억 5개를 가져옵니다. (slice(-5))]
+                const recentMemories = memoryCache.slice(-5);
+                
+                const memoryContext = recentMemories
+                    .map(mem => `- ${mem.summary}`) // 각 기억을 "- 요약 내용" 형태로 만듭니다.
+                    .join('\n'); // 각 줄을 엔터(줄바꿈)로 구분합니다.
+
+                // [✅ 4. 이 기억들을 '시스템 노트'로 만들어 AI의 대화 문맥에 주입합니다.]
+                const memorySystemPrompt = {
+                    role: 'system', // 이 메시지는 대화가 아니라 시스템 지침임을 명시
+                    parts: [{
+                        type: 'text',
+                        text: `(시스템 노트: 다음은 사용자와의 최근 대화 요약입니다. 이 맥락을 참고하여 사용자의 질문에 답변하세요. 사용자는 이 노트를 볼 수 없습니다.)\n\n[최근 대화 기록]\n${memoryContext}`
+                    }]
+                };
+
+                // historyForAI의 맨 앞에 시스템 노트를 추가합니다.
+                historyForAI.unshift(memorySystemPrompt); 
+                
+                console.log(`[Long-Term Memory] ${recentMemories.length}개의 최근 기억을 AI의 단기 기억에 주입했습니다.`);
+            }
+        } catch (memoryError) {
+            console.error('[Long-Term Memory] An error occurred during memory recall:', memoryError);
+        }
+        // -----------------------------------------------------------------
         
         const generationConfig = {};
         if (temperature !== undefined && temperature >= 0 && temperature <= 2) {
@@ -1728,7 +1904,7 @@ app.post('/api/chat', async (req, res) => {
             ]
         });
 
-        let historyForAI = [...conversationHistory];
+        
 
         // [✅ 최종 수정] AI에게 모든 도구의 존재를 명확하게 각인시키는 시스템 프롬프트
         const toolsSystemPrompt = `
@@ -1883,7 +2059,53 @@ Analyze the user's request and call the most appropriate tool with the correct p
         console.log(`[History] ${conversationHistory.length}개의 메시지를 ${chatId}.json 파일에 저장했습니다.`);
         console.log(`[API] Total tokens used: ${totalTokenCount}`);
 
-        const usageMetadata = response?.usageMetadata || { totalTokenCount: totalTokenCount || 0 };
+        // =================================================================
+        // [✅ 수정 위치 1] 여기에 기억 저장 로직을 추가합니다.
+        // =================================================================
+        try {
+            // 대화가 최소 2개 이상 (사용자 질문, 모델 답변)일 때만 요약을 시도합니다.
+            if (conversationHistory.length >= 2) {
+                const conversationText = conversationHistory
+                    .map(m => `${m.role}: ${m.parts.map(p => p.type === 'text' ? p.text : `(${p.type})`).join(' ')}`)
+                    .join('\n');
+
+                const summarizationPrompt = `다음 대화의 핵심 주제나 가장 중요한 정보를 한국어로 된 한 문장으로 요약해줘. 이 요약은 AI의 장기 기억으로 사용될 거야. 무엇이 논의되었거나 결정되었는지에 초점을 맞춰줘. 대화: ${conversationText}`;
+
+                // 요약 작업은 빠르고 저렴한 모델을 사용하는 것이 효율적입니다.
+                const summarizationModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+                const summaryResult = await summarizationModel.generateContent(summarizationPrompt);
+                const summaryText = summaryResult.response.text().trim();
+
+                if (summaryText) {
+                    console.log(`[Long-Term Memory] 새로운 기억 생성: ${summaryText}`);
+                    // 파일이 없을 수도 있으므로 try-catch로 안전하게 읽습니다.
+                    let memoryDB = { memories: [] };
+                    try {
+                        memoryDB = JSON.parse(await fs.readFile('long_term_memory.json', 'utf-8'));
+                    } catch (e) {
+                        console.log('[Long-Term Memory] 기존 메모리 파일이 없어 새로 생성합니다.');
+                    }
+                    
+                    memoryDB.memories.push({
+                        timestamp: new Date().toISOString(),
+                        summary: summaryText,
+                        chatId: chatId
+                    });
+                    await fs.writeFile('long_term_memory.json', JSON.stringify(memoryDB, null, 2));
+                }
+            }
+        } catch (memoryError) {
+            console.error('[Long-Term Memory] 기억 생성 중 오류 발생:', memoryError);
+        }
+        // =================================================================
+
+        saveMemory(conversationHistory, chatId, genAI, modelName);
+        
+        // =================================================================
+        // [✅ 여기에 이 한 줄을 추가해주세요!]
+        // 어떤 경우에도 가장 정확한 totalTokenCount를 기반으로 최종 사용량 객체를 만듭니다.
+        const usageMetadata = { totalTokenCount: totalTokenCount || 0 };
+        // =================================================================
         
         // [✅ 참고] 클라이언트에게 보내는 finalReply도 복원된 텍스트를 담고 있습니다.
         res.json({ 
@@ -2062,21 +2284,23 @@ cron.schedule('0 7 * * *', async () => { // 테스트를 위해 '매 1분마다'
     timezone: "Asia/Seoul"
 });
 // --- 7. 서버 실행 (가장 마지막에!) ---
-try {
-    const key = fsSync.readFileSync('localhost-key.pem');
-    const cert = fsSync.readFileSync('localhost.pem');
-    https.createServer({ key, cert }, app).listen(port, () => {
-        const url = `https://localhost:${port}`;
-        console.log(`서버가 ${url} 에서 실행 중입니다.`);
-        const start = process.platform === 'darwin' ? 'open' : 'win32' ? 'start' : 'xdg-open';
-        exec(`${start} ${url}`);
-    });
-} catch (e) {
-    console.error('HTTPS 서버 실행 실패. 인증서 파일을 확인하세요. HTTP로 대신 실행합니다.');
-    app.listen(port, () => {
-        const url = `http://localhost:${port}`;
-        console.log(`[폴백 모드] 서버가 ${url} 에서 실행 중입니다.`);
-        const start = process.platform === 'darwin' ? 'open' : 'win32' ? 'start' : 'xdg-open';
-        exec(`${start} ${url}`);
-    });
-}
+loadInitialMemory().then(() => { // <--- l을 하나 지워서 수정했습니다.
+    try {
+        const key = fsSync.readFileSync('localhost-key.pem');
+        const cert = fsSync.readFileSync('localhost.pem');
+        https.createServer({ key, cert }, app).listen(port, () => {
+            const url = `https://localhost:${port}`;
+            console.log(`서버가 ${url} 에서 실행 중입니다.`);
+            const start = process.platform === 'darwin' ? 'open' : 'win32' ? 'start' : 'xdg-open';
+            exec(`${start} ${url}`);
+        });
+    } catch (e) {
+        console.error('HTTPS 서버 실행 실패. 인증서 파일을 확인하세요. HTTP로 대신 실행합니다.');
+        app.listen(port, () => {
+            const url = `http://localhost:${port}`;
+            console.log(`[폴백 모드] 서버가 ${url} 에서 실행 중입니다.`);
+            const start = process.platform === 'darwin' ? 'open' : 'win32' ? 'start' : 'xdg-open';
+            exec(`${start} ${url}`);
+        });
+    }
+});

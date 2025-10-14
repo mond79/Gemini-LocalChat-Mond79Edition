@@ -21,6 +21,7 @@ user_profile.json
 chat_histories/
 token.json
 todo_list.json
+long_term_memory.json
 
 # Presentation files
 *.pptx
