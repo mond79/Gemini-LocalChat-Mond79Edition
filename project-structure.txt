@@ -1,0 +1,173 @@
+# ==================================================================================
+# Project Ailey-Bailey: Architecture & Module Responsibility Map
+# ==================================================================================
+# This document serves as the single source of truth for the project's architecture.
+# Last Updated: 2025-08-05
+# ----------------------------------------------------------------------------------
+
+## [1] Core Architecture Philosophy: Container-Component-Service
+# ----------------------------------------------------------------------------------
+# - Container: Connects state and services. Manages logic. (The "Brain")
+# - Component: Receives data (props) and renders UI. No internal state. (The "Eyes & Hands")
+# - Service:   Handles business logic, API calls, and data manipulation. (The "Muscle")
+# - Controller: Orchestrates modules and events for a specific view (e.g., settings modal).
+# - Module:    A self-contained unit of functionality with a clear, single purpose.
+# ----------------------------------------------------------------------------------
+
+## [2] Directory & File Structure
+
+├── .backups
+│   └── V1
+│       └── .gitignore
+├── .gitignore
+├── engine
+│   └── applyDeltaPatch.js         # SRP: Applies patch operations to the project structure.
+├── package.json                   # SRP: Manages project dependencies and scripts.
+├── project-structure.txt          # SRP: THIS FILE. Documents the architecture and module responsibilities.
+├── public
+│   ├── app                        # ROOT for all core frontend application logic.
+│   │   ├── components             # [Component] Dumb UI components that only render what they are told.
+│   │   │   ├── CodeBlock.js       # SRP: Renders a syntax-highlighted code block with a copy button.
+│   │   │   ├── CodeSummary.js     # SRP: Renders the UI for an attached code file summary.
+│   │   │   ├── Message.js         # SRP: Renders a single message bubble (user, model, or system) and its actions.
+│   │   │   └── ThinkingIndicator.js # SRP: Renders the container for the CSS sprite loading animation.
+│   │
+│   │   ├── containers             # [Container] Smart components that manage state and logic.
+│   │   │   └── ChatContainer.js   # SRP: Orchestrates the entire chat area, connecting state to UI components.
+│   │
+│   │   ├── controllers            # [NEW] Application controllers that orchestrate modules and handle view-specific logic.
+│   │   │   └── SettingsController.js # [MODIFIED] Orchestrates all settings-related modules for the settings page view.
+│   │
+│   │   ├── events                 # SRP: Manages the binding of DOM events to application logic.
+│   │   │   ├── domBindings.js     # SRP: Attaches event listeners to DOM elements.
+│   │   │   └── handlerOrchestrator.js # SRP: Acts as a central hub, delegating events to appropriate services.
+│   │
+│   │   ├── main.js                # SRP: The main entry point of the application; initializes all core modules.
+│   │
+│   │   ├── modules                # [NEW] Reusable, self-contained business logic units.
+│   │   │   └── settings           # [NEW] Groups all modules related to the settings functionality.
+│   │   │       ├── ApiSettings.js      # [NEW] SRP: Manages all UI and logic for API keys and model configuration.
+│   │   │       ├── GeneralSettings.js  # [NEW] SRP: Manages general settings like typing speed and data reset.
+│   │   │       └── UsageReporter.js    # [NEW] SRP: Manages API usage statistics and renders all related charts.
+│   │
+│   │   ├── services               # [Service] Handles business logic and external communication.
+│   │   │   ├── ChatService.js     # SRP: Manages all chat-related business logic (API orchestration, message prep).
+│   │   │   └── GeminiAPIService.js  # SRP: Performs low-level fetch calls to the backend API proxy.
+│   │
+│   │   ├── state                  # SRP: Manages the entire application state.
+│   │   │   ├── AppState.js        # SRP: The single source of truth for the application's state.
+│   │   │   ├── ModelManager.js    # SRP: Manages model-related state and logic (e.g., categorization).
+│   │   │   └── SessionManager.js  # SRP: Manages all CRUD operations for sessions and sidebar items.
+│   │
+│   │   └── utils                  # SRP: Provides reusable, application-agnostic helper functions.
+│   │       ├── CssLoader.js       # SRP: Dynamically loads CSS files on startup.
+│   │       ├── highlighter.js     # SRP: A dedicated wrapper for the highlight.js library.
+│   │       ├── MathRenderer.js    # [NEW] SRP: Encapsulates all logic for rendering mathematical formulas (KaTeX/MathJax).
+│   │       └── typewriter.js      # SRP: Executes a pre-built animation plan for a typing effect.
+│
+│   ├── assets                     # [NEW] Static assets like images, fonts, etc.
+│   │   └── images                 # [NEW] Image assets.
+│   │       └── loading-sprite.png # [NEW] Custom thinking indicator animation sprite sheet.
+│
+│   ├── components                 # General, non-chat-specific UI components.
+│   │   ├── common.js              # SRP: Provides a `createDOMElement` utility.
+│   │   ├── ContextMenu.js         # SRP: Manages the creation and display of context menus.
+│   │   ├── InputArea.js           # SRP: Manages the user input text area, file attachments, and send button.
+│   │   ├── Modal.js               # SRP: Manages all modal dialogs in a decoupled way via events.
+│   │   ├── SessionList.js         # SRP: Renders the hierarchical list of folders and sessions.
+│   │   └── Toast.js               # SRP: Manages and displays non-intrusive toast notifications.
+│
+│   ├── css                        # Contains all CSS stylesheets, organized by BEM-like methodology.
+│   │   ├── base                   # (Reset, Global styles, Theme variables)
+│   │   │   ├── _reset.css
+│   │   │   ├── global.css
+│   │   │   └── theme.css
+│   │   ├── components             # (Styles for individual components)
+│   │   │   ├── code-block.css
+│   │   │   ├── dropdown.css
+│   │   │   ├── input-area.css
+│   │   │   ├── message.css        # [MODIFIED] Contains the @keyframes and styles for the sprite animation.
+│   │   │   ├── modal.css
+│   │   │   ├── sidebar.css
+│   │   │   └── toast.css
+│   │   ├── layout                 # (Main layout styles like sidebar and chat area)
+│   │   │   ├── chat-area.css
+│   │   │   └── main.css
+│   │   ├── pages                  # (Page-specific styles like settings)
+│   │   │   ├── settings.css
+│   │   │   └── settings-page.css
+│   │   └── utils                  # (Animation keyframes, helper classes)
+│   │       ├── animations.css
+│   │       └── helpers.css
+│
+│   ├── index.html                 # SRP: The main HTML shell for the chat application.
+│   ├── prompt_editor.html         # [MODIFIED] Now loaded into a modal, not a separate page.
+│   ├── prompt_editor.js           # [MODIFIED] Now loaded into a modal, not a separate page.
+│   └── utils                      # General, low-level utility modules.
+│       ├── dom.js                 # SRP: Provides concise DOM selection utilities ($ and $$).
+│       ├── storage.js             # SRP: Handles all interactions with localStorage.
+│       └── TimeFormatter.js       # SRP: Formats timestamps into human-readable relative time strings.
+│
+├── server.js                      # SRP: The Node.js backend server (Express); acts as a proxy to the Gemini API.
+├── setup.js                       # SRP: A one-time script to set up the initial project structure.
+├── smartPatch.js                  # SRP: A script for applying programmatic changes to the codebase.
+└── version.js                     # SRP: Manages the project version.
+
+# ----------------------------------------------------------------------------------
+## [3] Custom Animation Implementation Guide (loading-sprite.png)
+# ----------------------------------------------------------------------------------
+# This section details how to create and modify the custom loading animation.
+#
+# A. How It Works (CSS Sprite Sheet Animation)
+# ----------------------------------------------------------------------------------
+# The animation is implemented using the CSS `steps()` timing function. A single,
+# long image file (a "sprite sheet") containing all animation frames is used as a
+# background. The CSS animation rapidly shifts the background position frame by
+# frame, creating the illusion of movement, much like a film strip.
+#
+# B. How to Create a New Animation Sprite Sheet
+# ----------------------------------------------------------------------------------
+# 1. Prepare Frames: Create your animation as a sequence of individual PNG files
+#    with transparent backgrounds. Ensure all frames have the exact same dimensions.
+# 2. Use a Sprite Sheet Generator: Use an online tool (e.g., toptal.com/developers/css/sprite-generator).
+# 3. Generator Settings:
+#    - Upload all your PNG frames.
+#    - Layout: MUST be 'Horizontal'.
+#    - Padding: MUST be '0'.
+#    - Data URI: MUST be unchecked.
+# 4. Export: Download the 'Spritesheet' (the combined .png file).
+# 5. Place File: Rename the downloaded file to `loading-sprite.png` and place it in
+#    the `public/assets/images/` directory, overwriting the old one.
+#
+# C. How to Modify the Animation in the Code
+# ----------------------------------------------------------------------------------
+# All animation logic is controlled within `public/css/components/message.css`.
+# The key is to match the CSS values to your new sprite sheet's properties.
+#
+# 1. Frame Dimensions & Count (`#thinking-indicator` rule):
+#    - `width`: Set to the width of a SINGLE animation frame.
+#    - `height`: Set to the height of a SINGLE animation frame.
+#    - `animation`: In `steps(X)`, X must be the TOTAL number of frames.
+#
+# 2. Total Animation Width (`@keyframes play-sprite` rule):
+#    - `to { background-position: -YYYYpx; }`: YYYY must be the
+#      TOTAL width of the entire spritesheet file (single frame width * total frames).
+#
+# 3. Animation Speed (`#thinking-indicator` rule):
+#    - `animation`: Change the time value (e.g., `2.5s`) to be larger for a
+#      slower animation, or smaller for a faster one.
+#
+# 4. On-Screen Size (`#thinking-indicator` rule):
+#    - `transform: scale(Z);`: Change Z to adjust the final display size.
+#      `0.1` means 10% of the original frame size.
+#
+# D. Current Configuration Values (as of 2025-08-05)
+# ----------------------------------------------------------------------------------
+# - Source File: `public/css/components/message.css`
+# - Single Frame Dimensions: 1280px (width) x 720px (height)
+# - Total Frames: 25
+# - Total Spritesheet Width: 32000px
+# - @keyframes `to` value: `background-position: -32000px;`
+# - Animation Duration: `2.5s` (This is the user-adjustable value for speed)
+# - On-Screen Scale: `0.1` (Resulting display size: 128px x 72px)
+# ----------------------------------------------------------------------------------

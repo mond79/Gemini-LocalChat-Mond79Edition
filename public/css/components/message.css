@@ -1,0 +1,118 @@
+/* --- Messages (Claude Style) --- */
+@keyframes play-sprite {
+    from { background-position: 0px; }
+    to { background-position: -3200px; }
+}
+
+.message {
+    position: relative;
+    margin-bottom: 10px;
+    max-width: 100%;
+    display: flex;
+    flex-direction: column;
+    animation: message-appear 0.4s ease-out;
+    font-size: 1.05em; /* [NEW] Slightly larger font for message content */
+}
+
+.message-content {
+    padding: 10px 0;
+    border-radius: 0;
+    line-height: 1.7; /* [MODIFIED] Increased line height for better readability */
+    word-wrap: break-word;
+    background-color: transparent !important;
+}
+
+.user .message-content {
+    border-left: 2px solid var(--border-user-message);
+    padding-left: 15px;
+}
+
+.model .message-content {}
+
+.system .message-content { background-color: var(--bg-message-system); color: var(--text-system); border: 1px solid var(--border-primary); padding: 10px 15px; border-radius: 8px; }
+
+.message-image { max-width: 350px; max-height: 400px; border-radius: 10px; margin-top: 5px; object-fit: cover; cursor: pointer; }
+
+/* --- Message Content Formatting --- */
+.message-content h1, .message-content h2, .message-content h3, .message-content h4 { margin-top: 1.2em; margin-bottom: 0.6em; line-height: 1.3; font-weight: 600; }
+.message-content h1 { font-size: 1.5em; }
+.message-content h2 { font-size: 1.3em; }
+.message-content h3 { font-size: 1.15em; }
+.message-content h4 { font-size: 1.05em; }
+.message-content ul, .message-content ol { padding-left: 2em; margin-top: 0.5em; margin-bottom: 0.5em; }
+.message-content li { margin-bottom: 0.4em; }
+.message-content p { margin-top: 0; margin-bottom: 0.8em; }
+.message-content p:last-child { margin-bottom: 0; }
+.message-content blockquote { border-left: 3px solid var(--border-secondary); padding-left: 1em; margin-left: 0; color: var(--text-secondary); }
+.message-content code:not(pre > code) { background-color: var(--bg-sidebar); padding: 0.2em 0.4em; border-radius: 3px; font-size: 90%; /* [MODIFIED] Adjusted size relative to new base */ }
+.message-content pre { background-color: var(--bg-sidebar); border: 1px solid var(--border-primary); border-radius: 4px; padding: 1em; overflow-x: auto; font-size: 0.9em; }
+.message-content pre code { background-color: transparent; padding: 0; border-radius: 0; font-size: inherit; }
+.message-content hr { border: none; border-top: 1px solid var(--border-primary); margin: 1.5em 0; }
+
+/* --- Mouse-tracking Floating Actions --- */
+.message-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: fixed;
+    z-index: 10;
+    background-color: var(--bg-chat-area);
+    padding: 4px 8px;
+    border-radius: 6px;
+    box-shadow: var(--shadow-dark);
+    border: 1px solid var(--border-primary);
+    opacity: 0;
+    pointer-events: none;
+    transform: scale(0.95);
+    transition: opacity 0.15s ease-out, transform 0.15s ease-out, top 0.05s linear, left 0.05s linear;
+}
+
+.message-actions.visible {
+    opacity: 1;
+    pointer-events: auto;
+    transform: scale(1);
+}
+
+.message-actions button { background: transparent; border: none; border-radius: 5px; padding: 5px; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); }
+.message-actions button:hover { background-color: var(--bg-hover); color: var(--text-primary); }
+.message-actions button svg { width: 16px; height: 16px; }
+.message-actions .math-switch-btn { width: auto; font-size: 0.8em; }
+/* [THE FIX] This rule was preventing the separator from showing. */
+.message-actions .action-separator {
+    display: block;
+    width: 1px;
+    height: 16px;
+    background-color: var(--border-primary);
+    margin: 0 4px;
+}
+
+/* --- Message Special States --- */
+.message-metadata { font-size: 0.8em; color: var(--text-secondary); opacity: 0.7; margin-top: 10px; padding-top: 5px; border-top: 1px solid var(--border-primary); }
+
+#thinking-indicator {
+    width: 128px;
+    height: 72px;
+    background-image: url(../../assets/images/loading-sprite.png);
+    background-size: 3200px 72px;
+    animation: play-sprite 5s steps(25) infinite;
+    image-rendering: pixelated;
+    margin-bottom: 10px;
+}
+
+/* --- Message Editing Styles --- */
+.message.is-editing .message-text-view { display: none; }
+.message.is-editing .message-edit-view { display: block; }
+.message-edit-view { display: none; }
+.message.is-editing .message-content { padding: 5px; }
+textarea.edit-textarea { width: 100%; box-sizing: border-box; padding: 10px 15px; border: 2px solid var(--bg-active); border-radius: 18px; background-color: var(--bg-chat-area); color: var(--text-primary); font-family: inherit; font-size: 1em; resize: vertical; min-height: 60px; }
+.edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.edit-action-btn { padding: 6px 12px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }
+.edit-action-btn.save { background-color: var(--bg-send-button); color: var(--text-light); }
+.edit-action-btn.cancel { background-color: var(--bg-hover); color: var(--text-primary); }
+
+/* PDF Attachment Summary */
+.pdf-summary-wrapper { background-color: var(--bg-sidebar); border: 1px solid var(--border-primary); border-radius: 8px; padding: 12px; margin-top: 8px; max-width: 100%; overflow: hidden; }
+.pdf-summary-header { display: flex; align-items: center; gap: 10px; }
+.pdf-summary-header .file-icon { color: var(--text-secondary); flex-shrink: 0; }
+.pdf-summary-header .file-info { flex-grow: 1; min-width: 0; }
+.pdf-summary-header .file-name { font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -1,0 +1,218 @@
+/* --- Input Area Redesign (Floating Capsule) --- */
+.input-area {
+    display: flex;
+    flex-direction: column;
+    margin-left: auto;
+    margin-right: auto;
+    margin-bottom: 20px;
+    padding: 12px;
+    background-color: var(--bg-input-area);
+    border: 1px solid var(--border-secondary);
+    border-radius: 12px;
+    box-shadow: var(--shadow-dark);
+    width: 100%;
+    max-width: 800px;
+    box-sizing: border-box;
+    gap: 10px;
+    transition: margin-bottom 0.4s ease-in-out, width 0.3s ease-in-out; /* Add transition */
+}
+
+.chat-area.is-empty .input-area {
+    margin-bottom: 25vh;
+}
+
+.input-main {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+textarea#message-input {
+    flex-grow: 1;
+    border: none;
+    border-radius: 0;
+    padding: 8px 0;
+    resize: none;
+    font-family: inherit;
+    font-size: 1em;
+    min-height: 24px;
+    max-height: 200px;
+    line-height: 1.5;
+    background-color: transparent;
+    color: var(--text-primary);
+    outline: none;
+}
+
+#image-upload-label {
+    background: none;
+    border: none;
+    padding: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    color: var(--text-secondary);
+    width: 40px;
+    height: 40px;
+    margin-top: 0;
+}
+
+#image-upload-label:hover { background-color: var(--bg-hover); }
+
+.input-controls-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-primary);
+}
+
+.input-actions-left, .input-actions-right {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+.model-selector-area,
+#system-prompt-selector-area {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.9em;
+    margin: 0;
+}
+
+#system-prompt-selector-area { flex-grow: 1; min-width: 150px; }
+
+#system-prompt-selector {
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236B7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+    background-position: right 0.5rem center;
+    background-repeat: no-repeat;
+    background-size: 1.2em 1.2em;
+    padding-right: 2rem;
+    padding-left: 8px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background-color: var(--bg-sidebar);
+    color: var(--text-primary);
+    font-size: 0.9em;
+    font-weight: 500;
+}
+
+body.dark-mode #system-prompt-selector {
+    background-color: var(--bg-button);
+    border-color: var(--border-primary);
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%23a0a0a0' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+}
+
+#system-prompt-selector:hover {
+    background-color: var(--bg-hover);
+}
+
+#system-prompt-selector-area label {
+    font-weight: normal;
+    font-size: 0.9em;
+    color: var(--text-secondary);
+}
+
+#manage-prompts-btn {
+    font-size: 0.9em;
+    padding: 4px 8px;
+    border-radius: 4px;
+    background-color: var(--bg-button);
+    border: 1px solid var(--border-primary);
+    height: auto;
+}
+
+body.dark-mode #manage-prompts-btn { background-color: var(--bg-button); }
+
+#send-btn {
+    background-color: var(--bg-send-button);
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    border: none;
+}
+
+#send-btn:disabled { background-color: var(--bg-button-disabled); cursor: not-allowed; }
+#send-btn:disabled:hover { background-color: var(--bg-button-disabled); }
+#send-btn svg { stroke: var(--text-light); }
+body.dark-mode #send-btn:hover { background-color: var(--bg-button-hover); }
+
+#image-preview-container {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 0 10px;
+    width: 100%;
+    max-width: 800px;
+    margin: 0 auto;
+    box-sizing: border-box;
+}
+
+.preview-item { position: relative; margin-bottom: 10px; }
+.preview-image { max-width: 100px; max-height: 100px; border-radius: 5px; border: 1px solid var(--border-primary); }
+.file-info-preview { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background-color: var(--bg-sidebar); border: 1px solid var(--border-primary); border-radius: 5px; font-size: 0.9em; }
+.file-icon { color: var(--text-secondary); }
+.file-name { font-weight: bold; }
+.file-size { color: var(--text-secondary); }
+.preview-remove-btn { position: absolute; top: -5px; right: -5px; background: var(--bg-modal-content); border: 1px solid var(--border-primary); border-radius: 50%; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 14px; line-height: 1; }
+
+/* --- Stop Generating Button Style --- */
+#send-btn.stop-generating {
+    background-color: var(--danger-red);
+}
+
+#send-btn.stop-generating:hover {
+    background-color: var(--danger-red-hover);
+}
+
+#send-btn .send-icon { display: block; }
+#send-btn .stop-icon { display: none; }
+#send-btn.stop-generating .send-icon { display: none; }
+#send-btn.stop-generating .stop-icon { display: block; }
+
+/* --- Responsive Design for Input Area --- */
+@media (max-width: 768px) {
+    .input-controls-bar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+    }
+    .input-actions-left {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+    .input-actions-right {
+        align-self: flex-end;
+    }
+    .custom-selector-trigger, #system-prompt-selector {
+        max-width: none;
+        width: 100%;
+    }
+}
+
+/* ========================================================== */
+/* [✅ 추가된 부분] TTS 스피커 버튼 스타일 */
+/* ========================================================== */
+
+/* 기본적으로 OFF 아이콘은 숨겨둡니다. */
+#tts-btn .icon-tts-off {
+    display: none;
+}
+
+/* 'active' 클래스가 붙었을 때 (TTS가 켜졌을 때) */
+#tts-btn.active .icon-tts-on {
+    display: none; /* ON 아이콘을 숨깁니다. */
+}
+
+#tts-btn.active .icon-tts-off {
+    display: block; /* OFF 아이콘을 보여줍니다. */
+}

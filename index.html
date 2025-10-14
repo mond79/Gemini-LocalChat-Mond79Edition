@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini 세션 채팅 (초세분화)</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.css">
+    <style>
+        /* [Critical CSS] Prevents Flash of Unstyled Content (FOUC) */
+        #app-loading-overlay {
+            position: fixed;
+            inset: 0;
+            background-color: #2e2e2e; /* Assume dark mode initially to avoid flash */
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            opacity: 1;
+            visibility: visible;
+            transition: opacity 0.5s ease-out, visibility 0.5s ease-out;
+        }
+        @media (prefers-color-scheme: light) {
+            #app-loading-overlay { background-color: #f7f7f7; }
+        }
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid rgba(128, 128, 128, 0.3);
+            border-top-color: #3a76f0;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        #app-loading-overlay p {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-size: 1.1em;
+            color: #a0a0a0;
+        }
+        @media (prefers-color-scheme: light) {
+             #app-loading-overlay p { color: #555555; }
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        body.loaded #app-loading-overlay { opacity: 0; visibility: hidden; }
+        .container { opacity: 0; transition: opacity 0.5s ease-in; }
+        body.loaded .container { opacity: 1; }
+    </style>
+</head>
+<body>
+    <div id="app-loading-overlay">
+        <div class="spinner"></div>
+        <p>애플리케이션 초기화 중...</p>
+    </div>
+    <div class="container">
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <button id="new-chat-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                    <span>새 채팅</span>
+                </button>
+                <div class="sidebar-actions">
+                    <button id="new-folder-btn" class="sidebar-icon-btn" title="새 폴더">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"></path><line x1="12" y1="10" x2="12" y2="16"></line><line x1="9" y1="13" x2="15" y2="13"></line></svg>
+                    </button>
+                    <div id="sort-menu-container" class="dropdown-container">
+                        <button id="sort-btn" class="sidebar-icon-btn" title="정렬">
+                           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M7 12h10M10 18h4"/></svg>
+                        </button>
+                        <ul id="sort-options" class="dropdown-menu hidden">
+                            <li data-sort="lastModified">최신 수정순</li>
+                            <li data-sort="createdAt">생성일순</li>
+                            <li data-sort="asc">이름순 (오름차순)</li>
+                            <li data-sort="desc">이름순 (내림차순)</li>
+                        </ul>
+                    </div>
+                    <button id="settings-btn" class="sidebar-icon-btn" title="설정">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06-.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    </button>
+                    <button id="dark-mode-toggle" class="sidebar-icon-btn" title="테마 전환">
+                        <svg class="light-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+                        <svg class="dark-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                    </button>
+                </div>
+            </div>
+            <ul id="session-list"></ul>
+        </div>
+        <div class="main-content-area">
+            <div class="chat-area view-active">
+                <div class="chat-header">
+                    <button id="toggle-sidebar-btn" class="sidebar-icon-btn" title="사이드바 토글">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
+                    </button>
+                    <div class="chat-header-content"><h2 id="session-title-header"></h2></div>
+                </div>
+                <div id="welcome-container" class="welcome-container hidden">
+                    <h2>Hi, How can I help you?</h2>
+                </div>
+                <div id="chat-box-wrapper" class="hidden"><div id="chat-box"></div><div id="scroll-fade-bottom" class="scroll-fade"></div></div>
+                <div id="image-preview-container"></div>
+                <div class="input-area">
+                    <div class="input-main">
+                        <input type="file" id="image-upload-input" accept="image/*,text/*,.pdf" style="display: none;">
+                        <label for="image-upload-input" id="image-upload-label" title="파일 첨부"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg></label>
+                        <textarea id="message-input" placeholder="메시지를 입력하세요..." rows="1"></textarea>
+                    </div>
+                    <div class="input-controls-bar">
+                        <div class="input-actions-left">
+                            <div class="model-selector-area"><select id="model-selector" style="display: none;"></select><div id="custom-model-selector" class="custom-selector-container"><button id="model-selector-trigger" class="custom-selector-trigger"></button><div id="model-selector-dropdown" class="custom-selector-dropdown hidden"></div></div></div>
+                            <div id="system-prompt-selector-area" class="hidden"><button id="manage-prompts-btn" class="sidebar-icon-btn" title="시스템 프롬프트 관리"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14,2 14,8 20,8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10,9 9,9 8,9"></polyline></svg></button></div>
+                        </div>
+                        <div class="input-actions-right">
+                            
+                            <!-- ========================================================== -->
+                            <!-- [✅ 바로 이 부분이 추가/수정된 부분입니다!] -->
+                            <button id="mic-btn" class="sidebar-icon-btn" title="음성으로 입력">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
+                            </button>
+                            <!-- [✅ 여기까지가 추가/수정된 부분입니다!] -->
+                            <!-- ========================================================== -->
+
+                            <button id="send-btn" title="전송" disabled><svg class="send-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg><svg class="stop-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg></button></div>
+                    </div>
+                </div>
+            </div>
+            <div id="settings-page">
+                <div class="settings-page-header"><h1>설정</h1></div>
+                <div class="settings-page-layout">
+                    <nav class="settings-nav"><ul id="settings-tabs-list"><li><button class="tab-btn active" data-tab="tab-api">API 및 모델</button></li><li><button class="tab-btn" data-tab="tab-interface">인터페이스</button></li><li><button class="tab-btn" data-tab="tab-data">데이터 관리</button></li><li><button class="tab-btn" data-tab="tab-usage">API 사용량</button></li></ul></nav>
+                    <main class="settings-content">
+                        <div id="tab-api" class="tab-content active">
+                           <div class="settings-section"><div class="settings-group settings-group--default"><label for="api-key">기본 Gemini API Key</label><div class="api-input-wrapper"><input type="password" id="api-key" placeholder="기본 API 키를 입력하세요"><button id="validate-key-btn">API 키 검증</button></div></div><div id="validation-status" class="status-message"></div></div>
+                           <div class="settings-section"><div class="settings-group settings-group--block"><h2>대체 API 키 목록 (순차 사용)</h2><p>기본 키의 일일 사용량 도달 시, 아래 목록의 키를 순서대로 사용합니다.</p><div id="fallback-keys-list" class="fallback-keys-list"></div><button id="add-fallback-key-btn" class="add-key-btn">+ 대체 키 추가</button></div></div>
+                           <div class="settings-section"><div class="settings-group settings-group--block"><div class="dashboard-header"><h2>모델 설정 대시보드</h2><button id="add-model-btn" class="add-model-btn">+ 모델 추가</button></div><p>관리할 모델을 직접 추가하고, 모델별 호출 제한, 비용 등을 설정합니다. 일일 호출량은 자정(PT)에 초기화됩니다.</p><div id="reset-countdown-timer" class="countdown-timer"></div><div id="model-dashboard-container"></div></div></div>
+                        </div>
+                        <div id="tab-interface" class="tab-content">
+                           <div class="settings-section"><div class="settings-group settings-group--default"><label for="typing-speed-slider">타이핑 효과 속도</label><div class="slider-wrapper"><input type="range" id="typing-speed-slider" min="5" max="100" step="5"><span id="typing-speed-value">30</span></div></div><p class="settings-group__description">AI 응답의 타이핑 효과 속도를 조절합니다. 값이 작을수록 빠릅니다.</p></div>
+                           <div class="settings-section"><div class="settings-group settings-group--default"><label>수학 공식 렌더러</label><div class="radio-group"><label><input type="radio" name="math-renderer" value="katex"> KaTeX (빠름)</label><label><input type="radio" name="math-renderer" value="mathjax"> MathJax (호환성 높음)</label></div></div><p class="settings-group__description">메시지에 포함된 수학 공식(LaTeX)을 렌더링할 라이브러리를 선택합니다.</p></div>
+                        </div>
+                        <div id="tab-data" class="tab-content">
+                           <div class="settings-section"><div class="settings-group settings-group--default"><label for="history-token-limit">대화 기록 토큰 제한</label><input type="number" id="history-token-limit" min="0" value="0"></div><p class="settings-group__description">API 요청 시 포함할 최대 토큰 수를 설정합니다. 0은 무제한입니다.</p></div>
+                           <div class="settings-section danger-zone"><h2>위험 구역</h2><div class="danger-item"><div><p class="danger-title">모든 세션 초기화</p><p class="danger-description">모든 폴더와 대화 기록이 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다.</p></div><button id="reset-sessions-btn" class="danger-btn">초기화 실행</button></div><div class="danger-item"><div><p class="danger-title">모든 API 사용기록 초기화</p><p class="danger-description">그래프와 상세 기록을 포함한 모든 누적 API 사용 데이터가 영구적으로 삭제됩니다.</p></div><button id="clear-usage-history-btn" class="danger-btn">초기화 실행</button></div></div>
+                        </div>
+                        <div id="tab-usage" class="tab-content">
+                           <div class="usage-dashboard">
+                               <div class="usage-toolbar">
+                                   <h2>사용량 대시보드</h2>
+                                   <div id="usage-filter-group" class="filter-group">
+                                       <div id="filter-date-range"></div>
+                                       <div id="filter-tags"></div>
+                                       <div id="filter-models"></div>
+                                   </div>
+                               </div>
+                               <div id="usage-summary-grid" class="summary-grid"></div>
+                               <div id="usage-charts-grid" class="charts-grid"></div>
+                               <div class="settings-section usage-details">
+                                   <div class="usage-details-toolbar">
+                                       <h3>상세 기록</h3>
+                                       <div id="history-grouping-toggle" class="filter-group"></div>
+                                   </div>
+                                   <div id="usage-history-container"></div>
+                                   <div id="pagination-controls" class="pagination-controls"></div>
+                               </div>
+                           </div>
+                        </div>
+                    </main>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="modal-container" class="modal-hidden">
+        <div id="modal-overlay"></div>
+        <div id="modal-content-wrapper"><button id="modal-close-btn">×</button><div id="modal-content"></div></div>
+    </div>
+    <div id="image-modal-container" class="modal-hidden">
+        <div id="image-modal-overlay"></div>
+        <div id="image-modal-content"><img id="image-modal-element" src="" alt="Enlarged image"><button id="image-modal-close-btn">×</button></div>
+    </div>
+    <ul id="context-menu" class="hidden"></ul>
+    <div id="toast-container"></div>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.js"></script>
+    <script>
+        window.MathJax = { tex: { inlineMath: [['$','$'], ['\\(','\\)']], displayMath: [['$$','$$'], ['\\[','\\]']], processEscapes: true }, options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] }, startup: { pageReady: () => {} } };
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script type="module" src="./app/main.js"></script>
+</body>
+</html>

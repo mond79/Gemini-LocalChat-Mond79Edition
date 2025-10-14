@@ -1,0 +1,77 @@
+/* --- Code Block Styling --- */
+.message-content .code-block-wrapper {
+    background-color: var(--bg-sidebar);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 1em 0;
+    border: 1px solid var(--border-primary);
+}
+
+.code-block-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background-color: var(--bg-hover);
+    color: var(--text-primary);
+    font-size: 0.9em; /* [MODIFIED] */
+    border-bottom: 1px solid var(--border-primary);
+}
+
+.code-block-language {
+    font-weight: bold;
+    text-transform: lowercase;
+}
+
+.code-block-copy-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: background-color 0.2s;
+}
+
+.code-block-copy-btn:hover {
+    background-color: var(--bg-active);
+    color: var(--text-light);
+}
+
+.code-block-copy-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
+.code-block-wrapper pre {
+    margin: 0 !important;
+    padding: 1em !important;
+    background-color: transparent !important;
+    border: none !important;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.code-block-wrapper pre code {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+    background: transparent !important;
+    padding: 0 !important;
+    font-size: 0.95em; /* [NEW] Increased code font size */
+    line-height: 1.6; /* [NEW] Improved line spacing for code */
+}
+
+/* --- Code Summary Attachment in User Message --- */
+.code-summary-wrapper { background-color: var(--bg-sidebar); border: 1px solid var(--border-primary); border-radius: 8px; padding: 12px; margin-top: 8px; max-width: 100%; overflow: hidden; }
+.code-summary-header { display: flex; align-items: center; gap: 10px; }
+.code-summary-header .file-icon { color: var(--text-secondary); flex-shrink: 0; }
+.code-summary-header .file-info { flex-grow: 1; min-width: 0; }
+.code-summary-header .file-name { font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.code-summary-header .file-meta { font-size: 0.85em; color: var(--text-secondary); }
+.code-summary-details { margin-top: 10px; }
+.code-summary-details summary { cursor: pointer; font-size: 0.9em; color: var(--text-secondary); user-select: none; padding: 4px 0; }
+.code-summary-details summary:hover { color: var(--text-primary); }
+.code-summary-preview { margin-top: 8px; background-color: var(--bg-main); border-radius: 4px; padding: 10px; max-height: 200px; overflow-y: auto; border: 1px solid var(--border-primary); }
+.code-summary-preview pre { margin: 0; padding: 0; background: none; border: none; font-size: 0.85em; white-space: pre-wrap; word-wrap: break-word; }

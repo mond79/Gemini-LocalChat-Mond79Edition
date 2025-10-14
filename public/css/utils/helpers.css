@@ -1,0 +1,13 @@
+/* --- Helper Classes --- */
+.hidden {
+    display: none !important;
+}
+/* This class was mistakenly omitted during refactoring and is critical for modals */
+.modal-hidden {
+    display: none !important;
+}
+
+/* [NEW] Utility to temporarily disable CSS transitions */
+.no-transition {
+    transition: none !important;
+}

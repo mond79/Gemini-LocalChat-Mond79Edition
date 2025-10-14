@@ -1,0 +1,97 @@
+/* --- Main Layout Structure --- */
+.container {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    display: flex;
+}
+
+.sidebar {
+    width: 260px;
+    background-color: var(--bg-sidebar);
+    border-right: 1px solid var(--border-primary);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    transition: width 0.3s ease, padding 0.3s ease, opacity 0.2s 0.1s, background-color 0.3s ease;
+    z-index: 10;
+}
+
+.main-content-area {
+    flex-grow: 1;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-area, #settings-page {
+    display: none;
+    flex-grow: 1;
+    min-height: 0;
+}
+
+.chat-area.view-active, #settings-page.view-active {
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-area {
+    background-color: var(--bg-main);
+    transition: background-color 0.3s ease;
+}
+
+/* [MODIFIED] Independent Headers */
+.chat-header, .settings-page-header {
+    display: flex;
+    align-items: center;
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--border-primary);
+    flex-shrink: 0;
+    height: 57px;
+    box-sizing: border-box;
+    transition: box-shadow 0.3s ease;
+}
+
+.chat-header.header-scrolled {
+    box-shadow: var(--shadow-dark);
+}
+
+.chat-header-content {
+    width: 100%;
+    max-width: 800px;
+    margin: 0 auto;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+#session-title-header {
+    flex-grow: 1;
+    text-align: center;
+    margin: 0;
+    font-size: 1.15em; /* [MODIFIED] Increased font size */
+    font-weight: 500; /* [NEW] Added for clarity */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* --- Collapsed Sidebar State --- */
+.container.sidebar-collapsed .sidebar {
+    width: 0;
+    padding-left: 0;
+    padding-right: 0;
+    border-right-color: transparent;
+    opacity: 0;
+    transition: width 0.3s ease, padding 0.3s ease, opacity 0.1s;
+}
+
+#toggle-sidebar-btn svg {
+    transition: transform 0.3s ease;
+}
+
+.container.sidebar-collapsed #toggle-sidebar-btn svg {
+    transform: rotate(180deg);
+}
+
+/* [REMOVED] App Loading Overlay styles moved to index.html as critical CSS */

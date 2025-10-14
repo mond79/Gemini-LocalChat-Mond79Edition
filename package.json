@@ -1,0 +1,55 @@
+{
+  "name": "gemini-ultra-granular-app-packaged",
+  "version": "1.2.0",
+  "description": "A highly modular chat application built with modern vanilla JS, packaged as an executable.",
+  "type": "commonjs",
+  "main": "server.js",
+  "bin": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "build": "node build.js",
+    "build-secure": "node build-secure.js",
+    "build-final": "node build-final.js",
+    "build-fixed": "node build-fixed.js",
+    "build-working": "node build-working.js",
+    "build-simple": "node build-simple.js",
+    "build-new": "node build-new.js",
+    "build-final-working": "node build-final-working.js",
+    "build-advanced": "node build-advanced.js",
+    "build-ultimate": "node build-ultimate.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.14.1",
+    "axios": "^1.12.2",
+    "cheerio": "^1.1.2",
+    "cors": "^2.8.5",
+    "date-fns": "^4.1.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "googleapis": "^162.0.0",
+    "mammoth": "^1.11.0",
+    "pdf-parse": "^1.1.1",
+    "pptxgenjs": "^4.0.1",
+    "puppeteer": "^24.23.0",
+    "uuid": "^13.0.0",
+    "xlsx": "^0.18.5",
+    "youtube-transcript": "^1.2.1"
+  },
+  "devDependencies": {
+    "electron-builder": "^26.0.12",
+    "javascript-obfuscator": "^4.1.1",
+    "nexe": "^5.0.0-beta.4",
+    "pkg": "^5.8.1"
+  },
+  "pkg": {
+    "assets": [
+      "public"
+    ],
+    "targets": [
+      "node18-win-x64",
+      "node18-macos-x64",
+      "node18-linux-x64"
+    ],
+    "outputPath": "dist"
+  }
+}

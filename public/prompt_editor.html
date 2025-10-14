@@ -1,0 +1,58 @@
+<div class="prompt-editor-container">
+    <div class="prompt-editor-header">
+        <div class="header-content">
+            <h1>시스템 프롬프트 관리</h1>
+            <p>AI의 역할과 행동을 정의하는 시스템 프롬프트를 관리하세요</p>
+        </div>
+        <button class="prompt-editor-close-btn" id="prompt-editor-close">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+        </button>
+    </div>
+    
+    <div class="prompt-editor-content">
+        <div class="prompt-form-section">
+            <h2>새 템플릿 추가</h2>
+            <div class="prompt-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="new-template-title">템플릿 제목</label>
+                        <input type="text" id="new-template-title" placeholder="예: 번역 도우미, 코딩 어시스턴트">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group full-width">
+                        <label for="new-template-text">프롬프트 내용</label>
+                        <textarea id="new-template-text" rows="4" placeholder="AI에게 전달할 시스템 프롬프트 내용을 입력하세요..."></textarea>
+                    </div>
+                </div>
+                <div class="form-actions">
+                    <button id="cancel-edit-btn" class="btn-secondary hidden">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                        취소
+                    </button>
+                    <button id="save-template-btn" class="btn-primary">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                            <polyline points="17,21 17,13 7,13 7,21"></polyline>
+                            <polyline points="7,3 7,8 15,8"></polyline>
+                        </svg>
+                        템플릿 저장
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="template-list-section">
+            <h2>저장된 템플릿</h2>
+            <div id="template-list-container">
+                <div id="template-list-body" class="template-grid"></div>
+            </div>
+        </div>
+    </div>
+</div>
