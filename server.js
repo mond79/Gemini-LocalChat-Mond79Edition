@@ -324,46 +324,89 @@ async function getYoutubeTranscript({ url }) {
 }
 
 // [도구 7 & 8] 사용자 프로필 저장/불러오기
-async function saveUserProfile({ fact }) {
-    console.log(`[Profile] 사용자 정보 저장 시도: ${fact}`);
+/**
+ * @description 사용자의 이름(name)이나 역할/직업(role) 같은 '정체성' 정보를 기억합니다.
+ * @param {string} key - 기억할 정보의 종류 ('name' 또는 'role').
+ * @param {string} value - 기억할 실제 내용.
+ */
+async function rememberIdentity({ key, value }) {
+    console.log(`[Profile] Remembering identity: ${key} = ${value}`);
     try {
-        const fileContent = await fs.readFile(userProfilePath, 'utf-8');
-        const profile = JSON.parse(fileContent);
-        
-        // 중복되는 사실이 없다면 추가
-        if (!profile.facts.includes(fact)) {
-            profile.facts.push(fact);
+        const profile = JSON.parse(await fs.readFile(userProfilePath, 'utf-8'));
+        if (profile.identity && profile.identity.hasOwnProperty(key)) {
+            profile.identity[key] = value;
             await fs.writeFile(userProfilePath, JSON.stringify(profile, null, 2));
-            console.log(`[Profile] 정보 저장 완료.`);
-            return `${fact} 라는 정보를 당신에 대해 기억하겠습니다.`;
-        } else {
-            console.log(`[Profile] 이미 저장된 정보입니다.`);
-            return `이미 알고 있는 내용입니다.`;
+            return `알겠습니다. 당신의 ${key}을(를) '${value}'(으)로 기억하겠습니다.`;
         }
-    } catch (error) {
-        console.error('[Profile] 프로필 저장 중 오류:', error);
-        return '죄송합니다, 당신에 대한 정보를 저장하는 데 실패했습니다.';
-    }
+        return `오류: '${key}'는 유효한 정체성 정보가 아닙니다. ('name' 또는 'role'만 가능합니다.)`;
+    } catch (error) { console.error('[Profile] Error in rememberIdentity:', error); return '프로필 업데이트에 실패했습니다.'; }
 }
 
-async function loadUserProfile() {
-    console.log(`[Profile] 사용자 정보 불러오기 시도`);
+/**
+ * @description 사용자가 좋아하거나(likes) 싫어하는(dislikes) 것에 대한 '선호도' 정보를 기억합니다.
+ * @param {string} type - 선호도의 종류 ('likes' 또는 'dislikes').
+ * @param {string} item - 좋아하거나 싫어하는 대상.
+ */
+async function rememberPreference({ type, item }) {
+    console.log(`[Profile] Remembering preference: ${type} = ${item}`);
     try {
-        const fileContent = await fs.readFile(userProfilePath, 'utf-8');
-        const profile = JSON.parse(fileContent);
-
-        if (profile.facts.length > 0) {
-            const factsString = profile.facts.join('\n- ');
-            console.log(`[Profile] 정보 불러오기 완료.`);
-            return `[기억하고 있는 당신에 대한 정보]\n- ${factsString}`;
-        } else {
-            console.log(`[Profile] 저장된 정보가 없습니다.`);
-            return '아직 당신에 대해 기억하고 있는 정보가 없습니다.';
+        const profile = JSON.parse(await fs.readFile(userProfilePath, 'utf-8'));
+        if (profile.preferences && profile.preferences.hasOwnProperty(type)) {
+            if (!profile.preferences[type].includes(item)) {
+                profile.preferences[type].push(item);
+                await fs.writeFile(userProfilePath, JSON.stringify(profile, null, 2));
+                return `알겠습니다. 당신이 '${item}'을(를) ${type}한다는 것을 기억하겠습니다.`;
+            }
+            return `이미 알고 있는 내용입니다.`;
         }
-    } catch (error) {
-        console.error('[Profile] 프로필 불러오기 중 오류:', error);
-        return '죄송합니다, 당신에 대한 정보를 불러오는 데 실패했습니다.';
-    }
+        return `오류: '${type}'는 유효한 선호도 정보가 아닙니다. ('likes' 또는 'dislikes'만 가능합니다.)`;
+    } catch (error) { console.error('[Profile] Error in rememberPreference:', error); return '프로필 업데이트에 실패했습니다.'; }
+}
+
+/**
+ * @description 사용자의 현재 단기 목표(current_tasks)나 장기 목표(long_term)를 기억합니다.
+ * @param {string} type - 목표의 종류 ('current_tasks' 또는 'long_term').
+ * @param {string} goal - 기억할 목표 내용.
+ */
+async function rememberGoal({ type, goal }) {
+    console.log(`[Profile] Remembering goal: ${type} = ${goal}`);
+    try {
+        const profile = JSON.parse(await fs.readFile(userProfilePath, 'utf-8'));
+        if (profile.goals && profile.goals.hasOwnProperty(type)) {
+            if (!profile.goals[type].includes(goal)) {
+                profile.goals[type].push(goal);
+                await fs.writeFile(userProfilePath, JSON.stringify(profile, null, 2));
+                return `알겠습니다. 당신의 목표 '${goal}'을(를) 기억하겠습니다.`;
+            }
+            return `이미 등록된 목표입니다.`;
+        }
+        return `오류: '${type}'는 유효한 목표 정보가 아닙니다. ('current_tasks' 또는 'long_term'만 가능합니다.)`;
+    } catch (error) { console.error('[Profile] Error in rememberGoal:', error); return '프로필 업데이트에 실패했습니다.'; }
+}
+
+/**
+ * @description AI가 현재 기억하고 있는 사용자에 대한 모든 구조화된 정보를 요약해서 보여줍니다.
+ */
+async function recallUserProfile() {
+    console.log(`[Profile] Recalling user profile...`);
+    try {
+        const profile = JSON.parse(await fs.readFile(userProfilePath, 'utf-8'));
+        let summary = "--- 현재 기억하고 있는 당신에 대한 정보 ---\n";
+
+        if (profile.identity?.name) summary += `\n**정체성:**\n- 이름: ${profile.identity.name}`;
+        if (profile.identity?.role) summary += `\n- 역할: ${profile.identity.role}`;
+
+        if (profile.preferences?.likes?.length > 0) summary += `\n\n**선호도:**\n- 좋아하는 것: ${profile.preferences.likes.join(', ')}`;
+        if (profile.preferences?.dislikes?.length > 0) summary += `\n- 싫어하는 것: ${profile.preferences.dislikes.join(', ')}`;
+
+        if (profile.goals?.current_tasks?.length > 0) summary += `\n\n**목표:**\n- 현재 목표: ${profile.goals.current_tasks.join(', ')}`;
+        if (profile.goals?.long_term?.length > 0) summary += `\n- 장기 목표: ${profile.goals.long_term.join(', ')}`;
+        
+        if (profile.interests?.length > 0) summary += `\n\n**관심사:**\n- ${profile.interests.join(', ')}`;
+        
+        summary += "\n-----------------------------------";
+        return summary;
+    } catch (error) { console.error('[Profile] Error in recallUserProfile:', error); return '프로필을 불러오는 데 실패했습니다.'; }
 }
 
 // 모델 목록을 가져오는 헬퍼 함수
@@ -1334,8 +1377,11 @@ const tools = {
   scrapeWebsite,
   getYoutubeTranscript,
   authorizeCalendar,
-  saveUserProfile,
-  loadUserProfile,
+  rememberIdentity,
+  rememberPreference,
+  rememberGoal,
+  recallUserProfile,
+  getCalendarEvents,
   getCalendarEvents,    
   createCalendarEvent,
   convertNaturalDateToISO,
@@ -1601,18 +1647,14 @@ app.post('/api/chat', async (req, res) => {
                   { name: 'searchWeb', description: 'Search the web for a SINGLE, simple, factual query. Good for quick lookups like "who is the CEO of Tesla?" or "what is the weather in Seoul?". Do NOT use this for broad, open-ended topics that require deep research.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'The search query' } }, required: ['query'] } },
                   { name: 'scrapeWebsite', description: '사용자가 제공한 특정 URL(웹사이트 링크)의 내용을 읽고 분석하거나 요약해야 할 때 사용합니다.', parameters: { type: 'object', properties: { url: { type: 'string', description: '내용을 읽어올 정확한 웹사이트 주소 (URL). 예: "https://..."' } }, required: ['url'] } },
                   { name: 'getYoutubeTranscript', description: '사용자가 "youtube.com" 또는 "youtu.be" 링크를 제공하며 영상의 내용을 요약하거나 분석해달라고 요청할 때 사용합니다.', parameters: { type: 'object', properties: { url: { type: 'string', description: '스크립트를 추출할 정확한 유튜브 영상 주소 (URL)' } }, required: ['url'] } },
-                  { name: 'saveUserProfile', description: '사용자가 자신에 대한 정보를 "기억해줘" 또는 "저장해줘" 라고 명시적으로 요청할 때 사용합니다.', parameters: { type: 'object', properties: { fact: { type: 'string', description: '기억해야 할 사용자에 대한 사실. 예: "나는 소고기를 좋아한다", "내 직업은 개발자다"' } }, required: ['fact'] } },
-                  { name: 'loadUserProfile', description: '사용자가 "내가 누구인지 알아?", "나에 대해 아는 것 말해줘", "내가 어디 산다고 했지?" 와 같이 자신에 대해 AI가 기억하는 정보를 물어볼 때 사용합니다.', parameters: { type: 'object', properties: {} } },
+                  { name: "recallUserProfile", description: "사용자가 '나에 대해 아는 것 말해줘', '내 프로필 요약해줘', '내가 누구야?' 등 AI가 자신에 대해 기억하는 모든 정보를 물어볼 때 사용합니다.", parameters: { type: 'object', properties: {} }},
+                  { name: "rememberIdentity", description: "사용자가 자신의 이름이나 직업/역할에 대해 알려주며 기억해달라고 할 때 사용합니다. 예: '내 이름은 몬드야', '내 직업은 개발자야'", parameters: {  type: 'object',  properties: { key: { type: 'string', enum: ['name', 'role'], description: "기억할 정보의 종류. '이름'이면 'name', '직업'이나 '역할'이면 'role'입니다." }, value: { type: 'string', description: "기억할 실제 내용." } }, required: ["key", "value"] } },
+                  { name: "rememberPreference", description: "사용자가 무언가를 '좋아한다' 또는 '싫어한다'고 명확하게 표현할 때 사용합니다. 예: '난 민트초코를 좋아해', '나는 오이를 싫어해'", parameters: {  type: 'object',  properties: { type: { type: 'string', enum: ['likes', 'dislikes'], description: "'좋아하면' 'likes', '싫어하면' 'dislikes'입니다." }, item: { type: 'string', description: "좋아하거나 싫어하는 대상." } }, required: ["type", "item"] }},
+                  { name: "rememberGoal", description: "사용자가 자신의 '목표'에 대해 이야기할 때 사용합니다. 예: '이번 달 목표는 매일 운동하기야', '내 최종 목표는 세계 일주야'", parameters: {  type: 'object',  properties: { type: { type: 'string', enum: ['current_tasks', 'long_term'], description: "단기적이거나 구체적인 목표는 'current_tasks', 장기적이거나 추상적인 목표는 'long_term'입니다." }, goal: { type: 'string', description: "기억할 목표의 내용." } }, required: ["type", "goal"] } },
                   { name: 'getWeather', description: '특정 주소나 지역의 정확한 실시간 날씨 정보를 가져옵니다. "창원시 성산구 상남동"처럼 아주 상세한 주소도 가능합니다.', parameters: { type: 'object', properties: { address: { type: 'string', description: '날씨를 조회할 전체 주소 또는 지역 이름. 예: "부산시 해운대구"' } }, required: ['address'] } },
                   { name: 'authorizeCalendar', description: '사용자가 "캘린더 연동", "구글 계정 연결" 등 처음으로 캘린더 관련 작업을 요청했지만, 아직 인증되지 않았을 때 사용합니다.', parameters: { type: 'object', properties: {} } },
-                  { name: 'getCalendarEvents', description: '사용자의 구글 캘린더에서 특정 기간의 일정을 조회할 때 사용합니다. "오늘 내 일정 뭐야?", "내일 약속 있어?" 와 같은 질문에 사용됩니다.', parameters: { type: 'object', properties: {
-                          timeMin: { type: 'string', description: '조회 시작 시간 (ISO 8601 형식). 지정하지 않으면 현재 시간부터 조회. 예: 2025-10-12T00:00:00Z' },
-                          timeMax: { type: 'string', description: '조회 종료 시간 (ISO 8601 형식). 예: 2025-10-12T23:59:59Z' } }, required: [] } },
-                  { name: 'createCalendarEvent', description: '사용자의 구글 캘린더에 새로운 일정을 추가할 때 사용합니다. "내일 3시에 미팅 잡아줘" 와 같은 요청에 사용됩니다.', parameters: { type: 'object',properties: {
-                          summary: { type: 'string', description: '이벤트의 제목. 예: "팀 프로젝트 미팅"' },
-                          description: { type: 'string', description: '이벤트에 대한 상세 설명 (선택 사항)' },
-                          startDateTime: { type: 'string', description: '이벤트 시작 시간 (ISO 8601 형식). 예: 2025-10-12T15:00:00' },
-                          endDateTime: { type: 'string', description: '이벤트 종료 시간 (ISO 8601 형식). 예: 2025-10-12T16:00:00' } }, required: ['summary', 'startDateTime', 'endDateTime'] } },
+                  { name: 'getCalendarEvents', description: '사용자의 구글 캘린더에서 특정 기간의 일정을 조회할 때 사용합니다. "오늘 내 일정 뭐야?", "내일 약속 있어?" 와 같은 질문에 사용됩니다.', parameters: { type: 'object', properties: { timeMin: { type: 'string', description: '조회 시작 시간 (ISO 8601 형식). 지정하지 않으면 현재 시간부터 조회. 예: 2025-10-12T00:00:00Z' }, timeMax: { type: 'string', description: '조회 종료 시간 (ISO 8601 형식). 예: 2025-10-12T23:59:59Z' } }, required: [] } },
+                  { name: 'createCalendarEvent', description: '사용자의 구글 캘린더에 새로운 일정을 추가할 때 사용합니다. "내일 3시에 미팅 잡아줘" 와 같은 요청에 사용됩니다.', parameters: { type: 'object',properties: { summary: { type: 'string', description: '이벤트의 제목. 예: "팀 프로젝트 미팅"' }, description: { type: 'string', description: '이벤트에 대한 상세 설명 (선택 사항)' }, startDateTime: { type: 'string', description: '이벤트 시작 시간 (ISO 8601 형식). 예: 2025-10-12T15:00:00' }, endDateTime: { type: 'string', description: '이벤트 종료 시간 (ISO 8601 형식). 예: 2025-10-12T16:00:00' } }, required: ['summary', 'startDateTime', 'endDateTime'] } },
                   { name: 'convertNaturalDateToISO', description: '사용자가 "오늘", "내일"과 같은 자연어로 기간을 언급했을 때, 그 기간을 다른 도구(예: getCalendarEvents)가 사용할 수 있는 정확한 ISO 8601 형식의 timeMin과 timeMax로 변환합니다.', parameters: { type: 'object', properties: { period: { type: 'string', description: '변환할 자연어 기간. 예: "오늘", "내일"' } }, required: ['period'] } },
                   { name: 'addTodo', description: '사용자가 "할 일 추가해줘", "to-do list에 넣어줘" 와 같이 새로운 할 일을 추가해달라고 요청할 때 사용합니다.', parameters: { type: 'object', properties: {task: { type: 'string', description: '추가할 할 일의 내용. 예: "우유 사기"' } }, required: ['task'] } },
                   { name: 'listTodos', description: '사용자가 "할 일 뭐 남았지?", "내 할 일 목록 보여줘" 와 같이 현재 등록된 모든 할 일 목록을 물어볼 때 사용합니다.', parameters: { type: 'object', properties: {} } },
@@ -1621,8 +1663,7 @@ app.post('/api/chat', async (req, res) => {
                   { name: 'executeCommand', description: '사용자의 로컬 컴퓨터에서 직접 시스템 셸 명령어를 실행합니다. "메모장 열어줘" (notepad), "계산기 켜줘" (calc), 또는 "크롬으로 네이버 열어줘" (start chrome https://naver.com) 와 같은 요청에 사용됩니다.', parameters: { type: 'object', properties: {command: { type: 'string', description: '실행할 정확한 셸 명령어. 예: "notepad", "start chrome https://youtube.com"' } }, required: ['command'] } },
                   { name: 'executeMultipleCommands', description: '사용자가 "A하고 B해줘", "그리고 C도 해줘" 와 같이 한 번에 여러 개의 시스템 명령을 요청할 때 사용합니다. 모든 명령어를 분석하여 command 문자열의 배열(array) 형태로 만들어 한 번에 호출해야 합니다.', parameters: { type: 'object', properties: { commands: { type: 'array', description: '실행할 셸 명령어들의 목록. 예: ["notepad", "calc"]', items: { type: 'string' } } }, required: ['commands'] } },
                   { name: 'getDailyBriefing', description: '사용자가 "오늘의 브리핑", "하루 요약해줘" 등 아침 브리핑을 명시적으로 요청하거나, 브리핑을 시작하자는 제안에 "응", "네", "좋아", "시작해" 라고 긍정적으로 대답했을 때 사용합니다. 캘린더, 할 일, 뉴스를 종합하여 하루를 요약합니다.',  parameters: { type: 'object', properties: {} } },
-                  { name: "autonomousResearcher", description: "This is the PRIMARY tool for answering broad, open-ended research questions that require multiple steps of investigation. You MUST use this tool for requests like 'tell me about Neuralink technology', 'write a report on the history of AI', or any topic that requires gathering information from multiple web pages or videos to form a comprehensive answer.", parameters: { type: "object", properties: { topic: { type: "string",  description: "조사하고 보고서를 작성할 주제" }, output_format: { type: "string",  enum: ["text", "ppt"], 
-                           description: "최종 결과물의 형식을 지정합니다. 사용자가 '보고서', '요약', '글'을 원하면 'text'로, '발표 자료', 'PPT', '슬라이드'를 원하면 'ppt'로 설정하세요. 지정하지 않으면 'text'가 기본값입니다." } }, required: ["topic"]  } },
+                  { name: "autonomousResearcher", description: "This is the PRIMARY tool for answering broad, open-ended research questions that require multiple steps of investigation. You MUST use this tool for requests like 'tell me about Neuralink technology', 'write a report on the history of AI', or any topic that requires gathering information from multiple web pages or videos to form a comprehensive answer.", parameters: { type: "object", properties: { topic: { type: "string",  description: "조사하고 보고서를 작성할 주제" }, output_format: { type: "string",  enum: ["text", "ppt"],  description: "최종 결과물의 형식을 지정합니다. 사용자가 '보고서', '요약', '글'을 원하면 'text'로, '발표 자료', 'PPT', '슬라이드'를 원하면 'ppt'로 설정하세요. 지정하지 않으면 'text'가 기본값입니다." } }, required: ["topic"]  } },
                 ]
               }
             ]
@@ -1639,9 +1680,6 @@ Available Tools:
 - searchWeb({query}): Search the web. Use for news, general knowledge, etc.
 - scrapeWebsite({url}): Read the content of a specific webpage URL. Use when a URL is provided.
 - getYoutubeTranscript({url}): Get the transcript of a YouTube video. Use for YouTube URLs.
-
-- saveUserProfile({fact}): Save a fact about the user. Use when the user says "기억해줘".
-- loadUserProfile(): Load saved facts about the user. Use when the user asks "내가 누구야?", "나에 대해 아는 것".
 
 - getCalendarEvents({timeMin, timeMax}): Get events from the user's Google Calendar for a specific period.
 - createCalendarEvent({summary, startDateTime, endDateTime}): Create a new event in the user's Google Calendar.
