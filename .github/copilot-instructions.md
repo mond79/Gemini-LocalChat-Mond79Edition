@@ -7,6 +7,12 @@
 - **Data:** User chat histories in `chat_histories/`, user profile in `user_profile.json`
 
 ## Key Architectural Patterns
+- **Container-Component-Service Pattern:** 
+  - Containers (`public/app/containers/*`): Smart components that manage state and logic
+  - Components (`public/app/components/*`): Dumb UI components for pure rendering 
+  - Services (`public/app/services/*`): Business logic and external communication
+  - Example: See `ChatContainer.js`, `Message.js`, and `ChatService.js`
+
 - **API Key Security:** All API keys are loaded from `.env` and never exposed to the frontend. Never hardcode or log secrets.
 - **Tool Functions:** Server exposes tools (web search, weather, scraping, YouTube transcript, user profile memory) as callable functions for the AI model. See `server.js` section 3 & 4 for all available tools and their parameters.
 - **Function Calling:** The main `/api/chat` endpoint supports function-calling: if a user message contains a URL or a request for weather/profile, the server may call the relevant tool and return the result to the model.

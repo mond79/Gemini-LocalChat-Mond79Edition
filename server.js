@@ -1103,21 +1103,36 @@ async function getDailyBriefing() {
  * @param {string} topic 조사할 주제 (예: "전기 자동차의 역사와 미래 전망")
  * @returns {Promise<string>} 최종 보고서 또는 진행 상황 메시지
  */
-async function autonomousResearcher({ topic }, modelName) {
-  console.log(`[Autonomous Researcher] 1. Mission Start! Topic: ${topic}, Using model: ${modelName}`);
+async function autonomousResearcher({ topic, output_format }, modelName) {
+  // 기본값을 'text'로 설정하여, 사용자가 형식을 지정하지 않으면 텍스트 보고서를 생성하도록 합니다.
+  const finalOutputFormat = output_format || 'text';
+
+  console.log(`[Autonomous Researcher] 1. Mission Start! Topic: ${topic}, Format: ${finalOutputFormat}`);
 
   try {
-    // --- 2단계: 계획 수립 (기존과 동일) ---
+    // --- 2단계: 계획 수립  ---
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({ model: modelName });
 
     const planningPrompt = `
       You are a world-class research planner and investigator. Your goal is to create a step-by-step plan to write a comprehensive report on the topic: "${topic}".
-      The plan must consist of a series of precise, actionable steps. Each step must be one of the following two types:
+
+      The plan must consist of a series of precise, actionable steps. Each step must be one of the following three types:
       1.  "SEARCH": A simple search query for a search engine. Use this to get a broad overview or find specific URLs.
-      2.  "SCRAPE": A specific URL to read the content from. Use this when you find a promising URL from a SEARCH step that needs deeper analysis.
+      2.  "SCRAPE": A specific URL of a text-based website (like news articles or blogs) to read its content.
+      3.  "YOUTUBE_TRANSCRIPT": A specific YouTube video URL to get its full transcript. Use this when a video likely contains detailed explanations or reviews.
+
       Based on the topic "${topic}", create a JSON array of at least 3 to 5 steps.
-      IMPORTANT: A good plan often starts with SEARCH to find relevant links, and then uses SCRAPE to analyze those links.
+      IMPORTANT: A good plan often starts with SEARCH to find relevant links, and then uses SCRAPE or YOUTUBE_TRANSCRIPT to analyze those links in detail.
+
+      Example Response for the topic "Apple Vision Pro review":
+      [
+        {"step": 1, "action": "SEARCH", "query": "Apple Vision Pro text review the verge"},
+        {"step": 2, "action": "SCRAPE", "query": "https://www.theverge.com/24054238/apple-vision-pro-review-vr-ar-headset-features-specs-price"},
+        {"step": 3, "action": "SEARCH", "query": "Apple Vision Pro video review MKBHD youtube"},
+        {"step": 4, "action": "YOUTUBE_TRANSCRIPT", "query": "https://www.youtube.com/watch?v=OFvXuyITw6I"}
+      ]
+
       Your entire response MUST be only the JSON array, with no other text or markdown.
     `;
     console.log(`[Autonomous Researcher] 2. Asking AI to create a research plan...`);
@@ -1146,12 +1161,12 @@ async function autonomousResearcher({ topic }, modelName) {
 
     console.log(`[Autonomous Researcher] 4. Executing the research plan with quality control...`);
     
-    // [✅ 최종 완성 버전] AI가 사용하는 다양한 키 이름을 모두 포용합니다.
+    // [AI가 사용하는 다양한 키 이름을 모두 포용합니다.
     for (const step of plan) {
-        const action = step.action || step.type; // 'action'이 없으면 'type'을 사용
-        const query = step.query || step.url; // 'query'가 없으면 'url'을 사용
+        const action = step.action || step.type;
+        const query = step.query || step.url;
 
-        if (!action || !query) continue; // 실행할 내용이 없으면 건너뜀
+        if (!action || !query) continue;
 
         if (action === 'SEARCH') {
             console.log(` > Executing Step: ${action} - "${query}"`);
@@ -1162,11 +1177,11 @@ async function autonomousResearcher({ topic }, modelName) {
             console.log(` > Executing Step: ${action} - "${query}"`);
             const scrapeResult = await scrapeWebsite({ url: query });
             
+            // 품질 검사(QC) 로직은 그대로 유지
             const MINIMUM_CONTENT_LENGTH = 200;
             if (scrapeResult.length < MINIMUM_CONTENT_LENGTH) {
                 console.warn(`[QC Failed] Scraped content is too short (${scrapeResult.length} chars). Discarding and attempting a fallback search.`);
                 researchData += `[SCRAPE 실패: ${query}] 내용이 너무 짧아 유효하지 않은 정보로 판단되어 폐기합니다.\n\n`;
-                
                 const fallbackQuery = `"${topic}"에 대한 추가 정보`;
                 console.log(` > [Fallback] Executing alternative search: "${fallbackQuery}"`);
                 const fallbackResult = await searchWeb({ query: fallbackQuery });
@@ -1175,30 +1190,85 @@ async function autonomousResearcher({ topic }, modelName) {
                  console.log(`[QC Passed] Scraped content is sufficient (${scrapeResult.length} chars).`);
                 researchData += `[SCRAPE 결과: ${query}]\n${scrapeResult}\n\n`;
             }
+            
+        // 유튜브 처리 분기를 추가합니다.
+        } else if (action === 'YOUTUBE_TRANSCRIPT') {
+            console.log(` > Executing Step: ${action} - "${query}"`);
+            // 우리가 이미 만들어 둔 getYoutubeTranscript 도구를 사용합니다!
+            const transcriptResult = await getYoutubeTranscript({ url: query });
+            researchData += `[YOUTUBE 결과: ${query}]\n${transcriptResult}\n\n`;
         }
     }
     
     console.log(`[Autonomous Researcher] 5. All research steps completed.`);
 
-    // --- 4단계: 최종 보고서 작성 (기존과 동일) ---
-    console.log(`[Autonomous Researcher] 6. Asking AI to synthesize the final report...`);
-    const synthesisPrompt = `
-        당신은 전문 보고서 작성가입니다. 당신의 임무는 아래에 제공된 여러 개의 원본 조사 데이터를 종합하여, "${topic}"이라는 주제에 대한 하나의 통일성 있고 잘 정리된 최종 보고서를 작성하는 것입니다.
-        제공된 데이터를 주요 정보원으로 사용하세요. 보고서는 명확한 제목, 서론, 본론, 결론의 구조를 갖추어야 합니다. 본론은 소제목이나 글머리 기호를 사용하여 가독성을 높여주세요.
-        단순히 조사 결과를 나열하지 말고, 정보들을 논리적으로 연결하여 하나의 완성된 글로 만들어야 합니다.
-        --- 원본 조사 데이터 ---
-        ${researchData}
-        --- 데이터 끝 ---
-        이제, 최종 보고서를 한국어로 작성해주세요.
-    `;
-    const finalResult = await model.generateContent(synthesisPrompt);
-    const finalReport = finalResult.response.text();
-    console.log(`[Autonomous Researcher] 7. Mission Complete! Final report generated.`);
-    return finalReport;
+    // --- [✅ 최종 융합] 3단계: output_format 값에 따라 다른 결과물 생성 ---
+    if (finalOutputFormat === 'ppt') {
+        // [PPT 생성 로직]
+        console.log(`[Autonomous Researcher] 6. Asking AI to synthesize the research into a PPT structure...`);
+        const pptSynthesisPrompt = `
+            You are a presentation expert and visual storyteller. Your task is to analyze the following collected research data and create a structured JSON object for a professional presentation about "${topic}".
+            The JSON object must follow this exact format:
+            {
+            "title": "A concise and engaging title for the entire presentation",
+            "slides": [
+                {
+                "title": "Title for Slide 1",
+                "points": [ "A bullet point.", "Another bullet point." ],
+                "image_keyword": "A simple, one-or-two-word English keyword for an image.",
+                "presenter_note": "A short, narrative script for the speaker to read. This should explain the bullet points in a more conversational tone."
+                }
+            ]
+            }
+            RULES:
+            - Your entire response MUST be a single, valid JSON object without any extra text.
+            - For each slide, you MUST provide a "presenter_note" and an "image_keyword". This is mandatory.
+            - Create at least 4-6 detailed slides based on the research data.
+
+            --- Collected Research Data ---
+            ${researchData}
+            --- End of Data ---
+
+            Now, analyze the data above and generate the JSON object for the presentation.
+        `;
+        
+        const finalResult = await model.generateContent(pptSynthesisPrompt);
+        const pptJsonString = finalResult.response.text();
+        
+        console.log(`[Autonomous Researcher] 7. AI has created the presentation JSON. Now generating the PPTX file...`);
+        
+        const pptxDownloadUrl = await createPresentation({ 
+            jsonString: pptJsonString, 
+            title: topic
+        });
+        
+        console.log(`[Autonomous Researcher] 8. Mission Complete! PPTX file generated.`);
+        const finalMessage = `"[${topic}]"에 대한 조사를 바탕으로 발표 자료(PPT) 생성을 완료했습니다. 아래 링크에서 다운로드하세요:\n\n[다운로드 링크](http://localhost:3333${pptxDownloadUrl})`;
+        return finalMessage;
+
+    } else {
+        // [텍스트 보고서 생성 로직]
+        console.log(`[Autonomous Researcher] 6. Asking AI to synthesize the final TEXT report...`);
+        const synthesisPrompt = `
+            당신은 전문 보고서 작성가입니다. 당신의 임무는 아래에 제공된 여러 개의 원본 조사 데이터를 종합하여, "${topic}"이라는 주제에 대한 하나의 통일성 있고 잘 정리된 최종 보고서를 작성하는 것입니다.
+            제공된 데이터를 주요 정보원으로 사용하세요. 보고서는 명확한 제목, 서론, 본론, 결론의 구조를 갖추어야 합니다. 본론은 소제목이나 글머리 기호를 사용하여 가독성을 높여주세요.
+            단순히 조사 결과를 나열하지 말고, 정보들을 논리적으로 연결하여 하나의 완성된 글로 만들어야 합니다.
+            --- 원본 조사 데이터 ---
+            ${researchData}
+            --- 데이터 끝 ---
+            이제, 최종 보고서를 한국어로 작성해주세요.
+        `;
+        
+        const finalResult = await model.generateContent(synthesisPrompt);
+        const finalReport = finalResult.response.text();
+        
+        console.log(`[Autonomous Researcher] 7. Mission Complete! Text report generated.`);
+        return finalReport;
+    }
 
   } catch (error) {
-    console.error('[Autonomous Researcher] Error during research phase:', error);
-    return `죄송합니다. 조사를 수행하는 중에 오류가 발생했습니다: ${error.message}`;
+    console.error('[Autonomous Researcher] Error during the entire process:', error);
+    return `죄송합니다. 자동 보고서 생성 중에 오류가 발생했습니다: ${error.message}`;
   }
 }
 // --- 4. 도구 목록(tools 객체) 생성 ---
@@ -1471,7 +1541,7 @@ app.post('/api/chat', async (req, res) => {
               {
                 functionDeclarations: [
                   { name: 'getCurrentTime', description: 'Get the current date and time.', parameters: { type: 'object', properties: {} } },
-                  { name: 'searchWeb', description: 'Search the web for recent information, news, weather, etc.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'The search query' } }, required: ['query'] } },
+                  { name: 'searchWeb', description: 'Search the web for a SINGLE, simple, factual query. Good for quick lookups like "who is the CEO of Tesla?" or "what is the weather in Seoul?". Do NOT use this for broad, open-ended topics that require deep research.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'The search query' } }, required: ['query'] } },
                   { name: 'scrapeWebsite', description: '사용자가 제공한 특정 URL(웹사이트 링크)의 내용을 읽고 분석하거나 요약해야 할 때 사용합니다.', parameters: { type: 'object', properties: { url: { type: 'string', description: '내용을 읽어올 정확한 웹사이트 주소 (URL). 예: "https://..."' } }, required: ['url'] } },
                   { name: 'getYoutubeTranscript', description: '사용자가 "youtube.com" 또는 "youtu.be" 링크를 제공하며 영상의 내용을 요약하거나 분석해달라고 요청할 때 사용합니다.', parameters: { type: 'object', properties: { url: { type: 'string', description: '스크립트를 추출할 정확한 유튜브 영상 주소 (URL)' } }, required: ['url'] } },
                   { name: 'saveUserProfile', description: '사용자가 자신에 대한 정보를 "기억해줘" 또는 "저장해줘" 라고 명시적으로 요청할 때 사용합니다.', parameters: { type: 'object', properties: { fact: { type: 'string', description: '기억해야 할 사용자에 대한 사실. 예: "나는 소고기를 좋아한다", "내 직업은 개발자다"' } }, required: ['fact'] } },
@@ -1494,7 +1564,8 @@ app.post('/api/chat', async (req, res) => {
                   { name: 'executeCommand', description: '사용자의 로컬 컴퓨터에서 직접 시스템 셸 명령어를 실행합니다. "메모장 열어줘" (notepad), "계산기 켜줘" (calc), 또는 "크롬으로 네이버 열어줘" (start chrome https://naver.com) 와 같은 요청에 사용됩니다.', parameters: { type: 'object', properties: {command: { type: 'string', description: '실행할 정확한 셸 명령어. 예: "notepad", "start chrome https://youtube.com"' } }, required: ['command'] } },
                   { name: 'executeMultipleCommands', description: '사용자가 "A하고 B해줘", "그리고 C도 해줘" 와 같이 한 번에 여러 개의 시스템 명령을 요청할 때 사용합니다. 모든 명령어를 분석하여 command 문자열의 배열(array) 형태로 만들어 한 번에 호출해야 합니다.', parameters: { type: 'object', properties: { commands: { type: 'array', description: '실행할 셸 명령어들의 목록. 예: ["notepad", "calc"]', items: { type: 'string' } } }, required: ['commands'] } },
                   { name: 'getDailyBriefing', description: '사용자가 "오늘의 브리핑", "하루 요약해줘" 등 아침 브리핑을 명시적으로 요청하거나, 브리핑을 시작하자는 제안에 "응", "네", "좋아", "시작해" 라고 긍정적으로 대답했을 때 사용합니다. 캘린더, 할 일, 뉴스를 종합하여 하루를 요약합니다.',  parameters: { type: 'object', properties: {} } },
-                  { name: "autonomousResearcher", description: "특정 주제에 대해 웹 검색, 정보 수집, 분석, 종합하여 최종 보고서를 생성하는 복합적인 작업을 수행합니다. '...에 대해 조사해줘', '...에 대한 리포트 써줘' 와 같이 여러 단계의 조사가 필요한 추상적인 요청에 사용해야 합니다.", parameters: { type: "object", properties: { topic: { type: "string",  description: "조사하고 보고서를 작성할 주제"   }  }, required: ["topic"]  } },
+                  { name: "autonomousResearcher", description: "This is the PRIMARY tool for answering broad, open-ended research questions that require multiple steps of investigation. You MUST use this tool for requests like 'tell me about Neuralink technology', 'write a report on the history of AI', or any topic that requires gathering information from multiple web pages or videos to form a comprehensive answer.", parameters: { type: "object", properties: { topic: { type: "string",  description: "조사하고 보고서를 작성할 주제" }, output_format: { type: "string",  enum: ["text", "ppt"], 
+                           description: "최종 결과물의 형식을 지정합니다. 사용자가 '보고서', '요약', '글'을 원하면 'text'로, '발표 자료', 'PPT', '슬라이드'를 원하면 'ppt'로 설정하세요. 지정하지 않으면 'text'가 기본값입니다." } }, required: ["topic"]  } },
                 ]
               }
             ]
