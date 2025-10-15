@@ -22,6 +22,7 @@ chat_histories/
 token.json
 todo_list.json
 long_term_memory.json
+job_tracker.json
 
 # Presentation files
 *.pptx

@@ -1473,6 +1473,106 @@ async function loadInitialMemory() {
         }
     }
 }
+// 기록 저장 능력 강화
+async function enrichMemoryAndProfile() {
+    // [✅ 확실하게 검증된 최종 버전]
+    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+    // [✅ 핵심 수정!] 모델 이름을 'gemini-2.5-flash'로 확실하게 지정합니다.
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+    // 1. 어제 하루 동안의 대화 기록을 불러옵니다.
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+
+    const yesterdayMemories = memoryCache.filter(mem => {
+        const memDate = new Date(mem.timestamp);
+        // 타임스탬프가 어제 자정 이후이고 오늘 자정 이전인 기록만 필터링
+        return memDate.getTime() >= yesterday.setHours(0, 0, 0, 0) && memDate.getTime() < today.setHours(0, 0, 0, 0);
+    });
+
+    if (yesterdayMemories.length === 0) {
+        console.log('[Memory Profiler] 어제 분석할 대화 기록이 없습니다.');
+        return;
+    }
+    console.log(`[Memory Profiler] 어제의 대화 기록 ${yesterdayMemories.length}개를 분석합니다...`);
+
+    const userProfile = JSON.parse(await fs.readFile(userProfilePath, 'utf-8'));
+
+    // 2. AI에게 '프로파일러' 역할을 부여하여 분석을 요청합니다.
+    const profilerPrompt = `
+        You are a highly intelligent profiler AI. Your task is to analyze the [User Profile] and a list of [Conversation Summaries] from yesterday.
+        Based on this analysis, you must perform two tasks:
+
+        1.  **Enrich Memories:** For each conversation summary, add relevant metadata like "keywords" (array of strings, in Korean) and "sentiment" (string: "positive", "negative", "neutral").
+        2.  **Update Profile:** Identify ONE SINGLE new piece of information about the user (a new interest, a new goal, a new preference) that is not already in their profile.
+
+        Your final output MUST be a single, valid JSON object with two keys: "enriched_memories" and "profile_update".
+        - "enriched_memories" should be an array of the updated memory objects. The original timestamp must be preserved.
+        - "profile_update" should be an object with an "action" and "params", or {"action": "none"}.
+
+        **[User Profile]:**
+        ${JSON.stringify(userProfile, null, 2)}
+
+        **[Conversation Summaries to Analyze]:**
+        ${JSON.stringify(yesterdayMemories, null, 2)}
+
+        Now, generate the final JSON output. Do not include markdown like \`\`\`json.
+    `;
+
+    const result = await model.generateContent(profilerPrompt);
+    let cleanJsonString = result.response.text().trim();
+    const analysisResult = JSON.parse(cleanJsonString);
+
+    // 3. 분석 결과를 실제 파일에 반영합니다.
+
+    // 3-1. long_term_memory.json 업데이트 (더 풍부해진 기억)
+    if (analysisResult.enriched_memories) {
+        let updatedCount = 0;
+        analysisResult.enriched_memories.forEach(enrichedMem => {
+            const index = memoryCache.findIndex(mem => mem.timestamp === enrichedMem.timestamp);
+            if (index !== -1) {
+                // 기존 기억 객체에 새로운 메타데이터를 추가 (덮어쓰기)
+                memoryCache[index] = { ...memoryCache[index], ...enrichedMem };
+                updatedCount++;
+            }
+        });
+        await fs.writeFile('long_term_memory.json', JSON.stringify({ memories: memoryCache }, null, 2));
+        console.log(`[Memory Profiler] ${updatedCount}개의 기억에 메타데이터를 성공적으로 추가/업데이트했습니다.`);
+    }
+
+    // 3-2. user_profile.json 업데이트 (스스로 학습한 프로필)
+    if (analysisResult.profile_update && analysisResult.profile_update.action !== 'none') {
+        const update = analysisResult.profile_update;
+        console.log(`[Memory Profiler] 새로운 프로필 업데이트 제안을 발견했습니다:`, update);
+
+        // [✅ 최종 코드!] AI의 제안을 실제로 실행합니다.
+        try {
+            // 현재 프로필 파일을 다시 읽어와서 최신 상태에서 수정합니다.
+            const currentUserProfile = JSON.parse(await fs.readFile(userProfilePath, 'utf-8'));
+
+            if (update.action === 'add_user_interest' && update.params.interest) {
+                const newInterest = update.params.interest;
+                if (!currentUserProfile.interests.includes(newInterest)) {
+                    currentUserProfile.interests.push(newInterest);
+                    console.log(`[Profile Update] interests에 '${newInterest}'를 추가했습니다.`);
+                }
+            }
+            // (나중에 AI가 제안할 다른 action들을 위해 여기에 else if를 추가할 수 있습니다.)
+            // 예: else if (update.action === 'add' && update.params.path === 'preferences.likes') { ... }
+
+            // 변경된 프로필 객체를 다시 파일에 저장합니다.
+            await fs.writeFile(userProfilePath, JSON.stringify(currentUserProfile, null, 2));
+            console.log(`[Profile Update] user_profile.json 파일 저장을 완료했습니다.`);
+
+        } catch (error) {
+            console.error('[Profile Update] 프로필 파일을 업데이트하는 중 오류가 발생했습니다:', error);
+        }
+
+    } else {
+        console.log('[Memory Profiler] 프로필을 업데이트할 새로운 정보를 찾지 못했습니다.');
+    }
+}
 // --- 4. 도구 목록(tools 객체) 생성 ---
 const tools = {
   getCurrentTime,
@@ -2234,57 +2334,167 @@ app.post('/api/create-presentation', async (req, res) => {
     }
 });
 
-// ["매일 아침 7시에 이 코드를 실행하라"는 스케줄을 등록합니다.
-cron.schedule('0 7 * * *', async () => { // 테스트를 위해 '매 1분마다'로 유지
-    console.log('[Cron Job] 프로그램 실행: 자동 리서치 작업을 시작합니다...');
-    try {
-        // [파일 존재 여부를 먼저 확인하여 안정성 확보
-        try {
-            await fs.access(userProfilePath); 
-        } catch (e) {
-            console.log('[Cron Job] user_profile.json 파일이 없어서 작업을 건너뜁니다.');
-            return; // 프로필 파일이 없으면 아예 작업을 시작하지 않음
-        }
+// [✅ 새로운 부분] 작업 실행 기록을 위한 파일 경로
+const jobTrackerPath = path.join(__dirname, 'job_tracker.json');
 
+// 마지막 실행 시간을 파일에서 읽어오는 함수
+async function getLastRunTime(jobName) {
+    try {
+        const data = await fs.readFile(jobTrackerPath, 'utf-8');
+        const tracker = JSON.parse(data);
+        return tracker.lastRun[jobName] ? new Date(tracker.lastRun[jobName]) : null;
+    } catch (error) {
+        // 파일이 없으면 null 반환
+        return null;
+    }
+}
+
+// 작업 실행 시간을 파일에 기록하는 함수
+async function recordRunTime(jobName) {
+    let tracker = { lastRun: {} };
+    try {
+        const data = await fs.readFile(jobTrackerPath, 'utf-8');
+        tracker = JSON.parse(data);
+    } catch (error) {
+        // 파일이 없어도 괜찮음
+    }
+    tracker.lastRun[jobName] = new Date().toISOString();
+    await fs.writeFile(jobTrackerPath, JSON.stringify(tracker, null, 2));
+}
+
+// [✅ 제미나이 2.5가 제안한 핵심 로직]
+async function checkAndRunDelayedJob() {
+    console.log('[Job Scheduler] 지연된 작업이 있는지 확인합니다...');
+    const now = new Date();
+    
+    // 오늘 새벽 3시를 기준으로 시간 객체 생성
+    const today3AM = new Date();
+    today3AM.setHours(3, 0, 0, 0);
+
+    const lastRun = await getLastRunTime('memoryProfiler');
+
+    // 조건: 지금 시간이 새벽 3시를 지났고, 마지막 실행 기록이 없거나 오늘 새벽 3시 이전일 경우
+    if (now > today3AM && (!lastRun || lastRun < today3AM)) {
+        
+        // [✅ 수정!] 바깥쪽 따옴표를 백틱(`)으로 변경하여 오류를 해결했습니다.
+        console.log(`[Job Scheduler] 지연된 'Memory Profiler' 작업을 발견하여 지금 실행합니다.`);
+        
+        try {
+            await enrichMemoryAndProfile(); // 기존에 만든 함수를 그대로 호출!
+            await recordRunTime('memoryProfiler'); // 성공하면 실행 시간 기록
+            console.log('[Job Scheduler] 지연된 작업이 성공적으로 완료되었습니다.');
+        } catch (error) {
+            console.error('[Job Scheduler] 지연된 작업 실행 중 오류 발생:', error);
+        }
+    } else {
+        console.log('[Job Scheduler] 실행할 지연된 작업이 없습니다.');
+    }
+}
+
+// 아침 7시 작업을 위한 지각 처리 함수
+async function checkAndRunDelayedResearcherJob() {
+    console.log('[Job Scheduler] 지연된 연구원 작업이 있는지 확인합니다...');
+    const now = new Date();
+    
+    // 오늘 아침 7시를 기준으로 시간 객체 생성
+    const today7AM = new Date();
+    today7AM.setHours(7, 0, 0, 0);
+
+    // 'autonomousResearcher'라는 이름으로 마지막 실행 시간을 가져옵니다.
+    const lastRun = await getLastRunTime('autonomousResearcher');
+
+    // 조건: 지금 시간이 아침 7시를 지났고, 마지막 실행 기록이 없거나 오늘 아침 7시 이전일 경우
+    if (now > today7AM && (!lastRun || lastRun < today7AM)) {
+        console.log(`[Job Scheduler] 지연된 'Autonomous Researcher' 작업을 발견하여 지금 실행합니다.`);
+        try {
+            await runAutonomousResearcherJob(); // 1단계에서 만든 함수 호출!
+            await recordRunTime('autonomousResearcher'); // 성공하면 실행 시간 기록
+            console.log('[Job Scheduler] 지연된 연구원 작업이 성공적으로 완료되었습니다.');
+        } catch (error) {
+            console.error('[Job Scheduler] 지연된 연구원 작업 실행 중 오류 발생:', error);
+        }
+    } else {
+        console.log('[Job Scheduler] 실행할 지연된 연구원 작업이 없습니다.');
+    }
+}
+// 매일 아침 7시에 '자율 연구' 작업을 실행합니다.
+cron.schedule('0 7 * * *', async () => {
+    console.log('[Cron Job - Autonomous Researcher] 정기 작업을 시작합니다...');
+    try {
+        await runAutonomousResearcherJob(); // 1단계에서 만든 함수를 호출
+        await recordRunTime('autonomousResearcher'); // [✅ 추가] 성공 기록 남기기
+        console.log('[Cron Job - Autonomous Researcher] 정기 작업이 성공적으로 완료되었습니다.');
+    } catch (error) {
+        console.error('[Cron Job - Autonomous Researcher] 정기 작업 중 오류가 발생했습니다.');
+    }
+}, {
+    scheduled: true,
+    timezone: "Asia/Seoul"
+});
+
+// 아침 7시의 '자율 연구' 작업을 위한 별도 함수
+async function runAutonomousResearcherJob() {
+    // 이 내용은 기존의 '매일 아침 7시' Cron Job 안에 있던 코드와 동일합니다.
+    try {
+        await fs.access(userProfilePath);
+        
         const profileContent = await fs.readFile(userProfilePath, 'utf-8');
         const profile = JSON.parse(profileContent);
         
-        // [관심사 목록이 실제로 있고, 비어있지 않은지 명확하게 확인
         if (profile.interests && Array.isArray(profile.interests) && profile.interests.length > 0) {
-            
-            // for...of 루프는 한 번에 하나씩 실행하여 안정적입니다.
             for (const interest of profile.interests) {
-                // 이 로그가 찍히는지 확인하는 것이 가장 중요합니다!
-                console.log(`[Cron Job] 관심사 "${interest}"에 대한 조사를 시작합니다.`);
-
-                // '자율적 연구원'을 텍스트 모드로 자동 실행
-                // [✅ 핵심 수정 3] 가장 빠르고 저렴한 모델을 명시적으로 사용
+                console.log(`[Autonomous Researcher] 관심사 "${interest}"에 대한 조사를 시작합니다.`);
+                // 'gemini-2.5-flash'를 명시적으로 사용하여 실행
                 const report = await autonomousResearcher({ topic: interest, output_format: 'text' }, 'gemini-2.5-flash'); 
                 
                 const briefingsDir = path.join(__dirname, 'briefings');
                 await fs.mkdir(briefingsDir, { recursive: true });
                 
                 const today = new Date().toISOString().split('T')[0];
-                // 파일명에 포함될 수 없는 문자를 안전하게 처리 (예: '/')
                 const safeInterest = interest.replace(/[\/\\?%*:|"<>]/g, '-');
                 const reportPath = path.join(briefingsDir, `${today}_${safeInterest.replace(/ /g, '_')}.txt`);
                 
                 await fs.writeFile(reportPath, report);
-                console.log(`[Cron Job] "${interest}"에 대한 조사 보고서를 저장했습니다: ${reportPath}`);
+                console.log(`[Autonomous Researcher] "${interest}"에 대한 조사 보고서를 저장했습니다: ${reportPath}`);
             }
         } else {
-            console.log('[Cron Job] 추적할 관심사가 없어서 작업을 종료합니다.');
+            console.log('[Autonomous Researcher] 추적할 관심사가 없어서 작업을 종료합니다.');
         }
-
     } catch (error) {
-        console.error('[Cron Job] 자동 리서치 작업 중 치명적인 오류 발생:', error);
+        // userProfilePath가 없을 때의 오류를 포함하여 모든 오류를 여기서 잡습니다.
+        console.error('[Autonomous Researcher] 작업 중 오류가 발생했습니다:', error.message);
+        // 이 오류를 밖으로 던져서 호출한 쪽에서 알 수 있게 합니다.
+        throw error;
+    }
+}
+
+// [새로운 Cron Job] 매일 새벽 3시에 '기억 정제 및 프로필 심화' 작업을 실행합니다.
+cron.schedule('0 3 * * *', async () => {
+    console.log('[Cron Job - Memory Profiler] 정기 작업을 시작합니다...');
+    try {
+        await enrichMemoryAndProfile();
+        await recordRunTime('memoryProfiler'); // [✅ 추가] 성공 기록 남기기
+        console.log('[Cron Job - Memory Profiler] 정기 작업이 성공적으로 완료되었습니다.');
+    } catch (error) {
+        console.error('[Cron Job - Memory Profiler] 정기 작업 중 오류가 발생했습니다:', error);
     }
 }, {
     scheduled: true,
     timezone: "Asia/Seoul"
 });
 // --- 7. 서버 실행 (가장 마지막에!) ---
-loadInitialMemory().then(() => { // <--- l을 하나 지워서 수정했습니다.
+async function startServer() {
+    console.log('[Server Startup] 서버 시작 절차를 개시합니다...');
+    
+    // 1. 기억을 먼저 불러옵니다.
+    await loadInitialMemory();
+    
+    // 2. 혹시 놓친 작업이 있으면 실행합니다.
+    await checkAndRunDelayedJob(); // 메모리 프로파일러(3시) 지각 확인
+    await checkAndRunDelayedResearcherJob(); // 자율 연구원(7시) 지각 확인
+
+    // 3. 모든 준비가 끝나면 서버를 시작합니다.
+    console.log('[Server Startup] 모든 준비가 완료되었습니다. 웹 서버를 실행합니다.');
     try {
         const key = fsSync.readFileSync('localhost-key.pem');
         const cert = fsSync.readFileSync('localhost.pem');
@@ -2303,4 +2513,7 @@ loadInitialMemory().then(() => { // <--- l을 하나 지워서 수정했습니�
             exec(`${start} ${url}`);
         });
     }
-});
+}
+
+// [✅ 최종 수정] 서버 시작 함수를 호출합니다.
+startServer();
