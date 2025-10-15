@@ -1,8 +1,3 @@
-// =========================================================================
-// 이 코드 블록 전체를 복사해서,
-// server.js 파일의 모든 내용을 완전히 덮어쓰세요.
-// =========================================================================
-
 require('dotenv').config();
 
 // --- 1. 모든 모듈 불러오기 (파일 맨 위에서 한 번에!) ---
@@ -910,83 +905,66 @@ async function _actuallyExecuteCommand(command) {
 
 // [새로운 기억 저장 전담 함수]
 async function saveMemory(conversationHistory, chatId, genAI, mainModelName) {
-    console.log('[메모리 저장 1/5] 기억 저장 절차를 시작합니다.');
-    
-    // [효율성] 평소에 사용할 빠르고 저렴한 요약 전용 모델 이름
+    console.log('[메모리 저장] 기억 저장 절차를 시작합니다.');
+
+    if (!conversationHistory || conversationHistory.length < 2) {
+        console.log('[메모리 저장] 대화 내용이 충분하지 않아 저장을 건너뜁니다.');
+        return;
+    }
+
+    // [✅ 핵심 수정 1] 평소에 사용할 빠르고 저렴한 요약 전용 모델 이름 정의
     const preferredSummarizerModel = 'gemini-2.5-flash';
 
+    // 대화 내용과 프롬프트는 한 번만 생성하여 재사용합니다.
+    const conversationText = conversationHistory
+        .map(m => `${m.role}: ${m.parts.map(p => p.type === 'text' ? p.text : `(${p.type})`).join(' ')}`)
+        .join('\n');
+    const summarizationPrompt = `다음 대화의 핵심 주제나 가장 중요한 정보를 한국어로 된 한 문장으로 요약해줘. 이 요약은 AI의 장기 기억으로 사용될 거야. 무엇이 논의되었거나 결정되었는지에 초점을 맞춰줘. 대화: ${conversationText}`;
+
     try {
-        if (!conversationHistory || conversationHistory.length < 2) {
-            return;
-        }
-
-        const conversationText = conversationHistory
-            .map(m => `${m.role}: ${m.parts.map(p => p.type === 'text' ? p.text : `(${p.type})`).join(' ')}`)
-            .join('\n');
-        
-        const summarizationPrompt = `다음 대화의 핵심 주제나 가장 중요한 정보를 한국어로 된 한 문장으로 요약해줘. 이 요약은 AI의 장기 기억으로 사용될 거야. 무엇이 논의되었거나 결정되었는지에 초점을 맞춰줘. 대화: ${conversationText}`;
-
-        // --- 1차 시도: 평소 사용하던 요약 모델로 실행 ---
-        console.log(`[메모리 저장 3/5] 1차 시도: '${preferredSummarizerModel}' 모델로 요약을 요청합니다...`);
+        // --- 1차 시도: 평소 사용할 효율적인 모델로 실행 ---
+        console.log(`[메모리 저장] 1차 시도: '${preferredSummarizerModel}' 모델로 요약을 요청합니다...`);
         let summarizationModel = genAI.getGenerativeModel({ model: preferredSummarizerModel });
         let summaryResult = await summarizationModel.generateContent(summarizationPrompt);
-        let summaryText = summaryResult.response?.text().trim() || '';
+        let summaryText = summaryResult.response?.text().trim();
 
-        console.log('[메모리 저장 4/5] AI로부터 다음 요약을 받았습니다:', summaryText);
+        if (!summaryText) throw new Error("AI가 빈 요약을 생성했습니다.");
+        
+        console.log('[메모리 저장] 1차 시도 성공! AI로부터 다음 요약을 받았습니다:', summaryText);
+        
+        // --- 성공 시 파일 저장 로직 (공통) ---
+        const newMemory = { timestamp: new Date().toISOString(), summary: summaryText, chatId: chatId };
+        memoryCache.push(newMemory);
+        const dataToSave = JSON.stringify({ memories: memoryCache }, null, 2);
+        await fs.writeFile('long_term_memory.json', dataToSave, 'utf-8');
+        console.log('[파일 저장] 메모리의 모든 내용을 파일에 성공적으로 저장했습니다.');
 
-        // --- 파일 저장 로직 (공통) ---
-        if (summaryText) {
-            const newMemory = {
-                timestamp: new Date().toISOString(),
-                summary: summaryText,
-                chatId: chatId
-            };
-
-            memoryDB.memories.push({ timestamp: new Date().toISOString(), summary: summaryText, chatId: chatId });
-            // [✅ 1. 즉시 메모리에 반영]
-            memoryCache.push(newMemory);
-            console.log(`[메모리 저장] 성공! 새로운 기억을 메모리에 추가했습니다. (현재 ${memoryCache.length}개)`);
-
-            // [✅ 2. 백그라운드에서 파일에 저장]
-            const dataToSave = JSON.stringify({ memories: memoryCache }, null, 2);
-            await fs.writeFile('long_term_memory.json', dataToSave, 'utf-8');
-            console.log('[파일 저장] 메모리의 모든 내용을 파일에 안전하게 저장했습니다.');
-        } else {
-            console.log('[메모리 저장] AI가 생성한 요약이 비어있어 저장을 건너뜁니다.');
-        }
-
-    } catch (error) {
-        // [✅ 오류 발생 시, 메모리 롤백] - 데이터 정합성을 위해 방금 추가한 기억을 제거
-        memoryCache.pop(); 
-        console.error('[파일 저장 실패!] 파일 저장 중 오류가 발생하여 메모리를 이전 상태로 되돌립니다.');
+    } catch (initialError) {
+        console.warn(`[메모리 저장] 1차 시도(${preferredSummarizerModel}) 실패. 원인: ${initialError.message}`);
+        
+        // --- [✅ 핵심 수정 2] 2차 시도: 대화에 사용된 '원본 모델'로 재시도 ---
+        console.log(`[메모리 저장] 2차 시도: 대화에 사용된 원래 모델 ('${mainModelName}')로 재시도합니다...`);
 
         try {
-            // --- 2차 시도: 메인 채팅에서 사용한 모델로 실행 ---
-            const conversationText = conversationHistory.map(m => `${m.role}: ${m.parts.map(p => p.text || '').join(' ')}`).join('\n');
-            const summarizationPrompt = `다음 대화의 핵심 주제를 한 문장으로 요약해줘: ${conversationText}`;
-            
             let fallbackModel = genAI.getGenerativeModel({ model: mainModelName });
             let fallbackResult = await fallbackModel.generateContent(summarizationPrompt);
-            let fallbackSummaryText = fallbackResult.response?.text().trim() || '';
+            let fallbackSummaryText = fallbackResult.response?.text().trim();
 
-            // --- 파일 저장 로직 (2차 시도 성공 시) ---
-            if (fallbackSummaryText) {
-                console.log('[메모리 저장 4/5 - 2차 성공] AI로부터 다음 요약을 받았습니다:', fallbackSummaryText);
-                // ... (파일 저장 로직 반복) ...
-                let memoryDB = { memories: [] };
-                try {
-                    const fileContent = await fs.readFile('long_term_memory.json', 'utf-8');
-                    if (fileContent) memoryDB = JSON.parse(fileContent);
-                } catch (e) { /* 파일이 없어도 괜찮음 */ }
-                if (!Array.isArray(memoryDB.memories)) memoryDB.memories = [];
+            if (!fallbackSummaryText) throw new Error("예비 모델도 빈 요약을 생성했습니다.");
+            
+            console.log('[메모리 저장] 2차 시도 성공! AI로부터 다음 요약을 받았습니다:', fallbackSummaryText);
+            
+            // --- 성공 시 파일 저장 로직 (공통) ---
+            const newMemory = { timestamp: new Date().toISOString(), summary: fallbackSummaryText, chatId: chatId };
+            memoryCache.push(newMemory);
+            const dataToSave = JSON.stringify({ memories: memoryCache }, null, 2);
+            await fs.writeFile('long_term_memory.json', dataToSave, 'utf-8');
+            console.log('[파일 저장] 메모리의 모든 내용을 파일에 성공적으로 저장했습니다. (예비 모델 사용)');
 
-                memoryDB.memories.push({ timestamp: new Date().toISOString(), summary: fallbackSummaryText, chatId: chatId });
-                await fs.writeFile('long_term_memory.json', JSON.stringify(memoryDB, null, 2));
-                console.log('[메모리 저장 5/5] 성공! (예비 모델 사용) 새로운 기억을 long_term_memory.json 파일에 저장했습니다.');
-            }
         } catch (fallbackError) {
             console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-            console.error('[메모리 저장 최종 실패!] 예비 모델로도 기억 생성에 실패했습니다:', fallbackError.message);
+            console.error(`[메모리 저장 최종 실패!] 예비 모델('${mainModelName}')로도 기억 생성에 실패했습니다.`);
+            console.error('>> 실제 오류 원인:', fallbackError.message);
             console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
         }
     }
@@ -1650,11 +1628,11 @@ app.post('/api/validate', async (req, res) => {
 // ... (validate, extract-text 등 다른 API 경로들)
 
 // [메인 채팅 API]
+// =================================================================
+// [✅ 최종 완성본] 이 코드로 전체를 교체해주세요
+// =================================================================
 app.post('/api/chat', async (req, res) => {
-    let { model: modelName, history, chatId, historyTokenLimit, systemPrompt, temperature, topP } = req.body;
-
-    // 클라이언트에서 보낼 'task' 정보를 받습니다.
-    let { task } = req.body;
+    let { model: modelName, history, chatId, historyTokenLimit, systemPrompt, temperature, topP, task } = req.body;
     
     console.log(`[API] Chat request - Model: ${modelName}, ChatID: ${chatId || 'New Chat'}`);
 
@@ -1666,8 +1644,10 @@ app.post('/api/chat', async (req, res) => {
     }
 
     try {
-        
+        const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
         const lastUserText = history.slice(-1)[0]?.parts.find(p => p.type === 'text')?.text.toLowerCase();
+        
+        // --- 경로 1: '응'과 같이 명령 실행을 확인하는 경우 ---
         if (chatId && pendingConfirmations[chatId] && ['y', 'yes', '응', '네', '실행', '허가'].some(term => lastUserText.includes(term))) {
             const confirmationData = pendingConfirmations[chatId];
             delete pendingConfirmations[chatId];
@@ -1697,107 +1677,13 @@ app.post('/api/chat', async (req, res) => {
             conversationHistory.push({ role: 'model', parts: [finalReply] });
             await fs.writeFile(chatFilePath, JSON.stringify(conversationHistory, null, 2));
 
-            // [✅ 핵심 수정] AI 호출이 없었으므로, 토큰 사용량은 0으로 설정하여 응답합니다.
-            saveMemory(conversationHistory, chatId, genAI, modelName);
-            // [✅ 궁극의 진화] 대화 내용 자동 학습 및 프로필 업데이트 로직
-// -----------------------------------------------------------------
-    try {
-        const profile = JSON.parse(await fs.readFile(user_profile.json, 'utf-8'));
-        const conversationText = conversationHistory
-            .map(m => `${m.role}: ${m.parts.map(p => p.text).join('')}`)
-            .join('\n');
-
-        const learningPrompt = `
-            You are a sharp and insightful Profile Analyst AI. Your mission is to analyze the [Recent Conversation] and identify if the user has revealed any new, certain, and meaningful information about themselves that is not already in their [Current User Profile].
-
-            Based on the conversation, identify ONLY ONE piece of new information related to the user's identity(name, role), preferences(likes, dislikes), or goals(current_tasks, long_term).
-            Then, suggest ONE SINGLE function call to update the user's profile using the available tools.
-            
-            Available Tools:
-            - rememberIdentity({key: "name" | "role", value: "string"})
-            - rememberPreference({type: "likes" | "dislikes", item: "string"})
-            - rememberGoal({type: "current_tasks" | "long_term", goal: "string"})
-
-            Example:
-            - If user says "My name is Mond", suggest: rememberIdentity({key: "name", value: "Mond"})
-            - If user says "I really hate bugs", suggest: rememberPreference({type: "dislikes", item: "bugs"})
-            - If user says "My goal this year is to learn guitar", suggest: rememberGoal({type: "long_term", goal: "learn guitar"})
-
-            IMPORTANT RULES:
-            1. Only learn factual and certain information. Do not infer or guess.
-            2. If no new, certain information is found, you MUST respond with the single word: "NO_UPDATE".
-            3. Your response must be ONLY the function call or "NO_UPDATE". Do not add any other text.
-
-            [Current User Profile]:
-            ${JSON.stringify(profile, null, 2)}
-
-            [Recent Conversation]:
-            ${conversationText}
-
-            Now, suggest a function call to update the profile, or respond with "NO_UPDATE".
-        `;
-
-        // 자기 자신에게 다시 한번 질문을 던져 학습할 내용을 찾아냅니다.
-        // 이 작업은 배경에서 일어나므로, 빠르고 저렴한 모델을 사용하는 것이 좋습니다.
-        const learningModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-        const learningResult = await learningModel.generateContent(learningPrompt);
-        const suggestedCallText = learningResult.response.text();
-
-        if (suggestedCallText && !suggestedCallText.includes("NO_UPDATE")) {
-            console.log(`[AI Learning] Found new information to learn. Suggested update: ${suggestedCallText}`);
-            
-            // (향후 과제) 여기서 실제로 제안된 함수 호출을 파싱하고 실행하는 로직을 추가할 수 있습니다.
-            // 예를 들어, 정규식을 사용해 함수 이름과 인자를 추출하고, tools[functionName](args)를 호출합니다.
-            // 지금은 안전을 위해 콘솔에 로그만 남깁니다.
-
-        } else {
-            console.log('[AI Learning] No new information to learn from this conversation.');
-        }
-
-    } catch (learningError) {
-        console.error('[AI Learning] An error occurred during the self-learning process:', learningError);
-    }
-    
-        // =================================================================
-        // [✅ 수정 위치 2] 여기에도 기억 저장 로직을 똑같이 추가합니다.
-        // =================================================================
-        try {
-            if (conversationHistory.length >= 2) {
-                const conversationText = conversationHistory
-                    .map(m => `${m.role}: ${m.parts.map(p => p.type === 'text' ? p.text : `(${p.type})`).join(' ')}`)
-                    .join('\n');
-
-                const summarizationPrompt = `다음 대화의 핵심 주제나 가장 중요한 정보를 한국어로 된 한 문장으로 요약해줘. 이 요약은 AI의 장기 기억으로 사용될 거야. 무엇이 논의되었거나 결정되었는지에 초점을 맞춰줘. 대화: ${conversationText}`;
-                
-                const summarizationModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-                const summaryResult = await summarizationModel.generateContent(summarizationPrompt);
-                const summaryText = summaryResult.response.text().trim();
-
-                if (summaryText) {
-                    console.log(`[Long-Term Memory] 새로운 기억 생성 (명령 확인): ${summaryText}`);
-                    let memoryDB = { memories: [] };
-                    try {
-                        memoryDB = JSON.parse(await fs.readFile('long_term_memory.json', 'utf-8'));
-                    } catch (e) {
-                        console.log('[Long-Term Memory] 기존 메모리 파일이 없어 새로 생성합니다.');
-                    }
-                    
-                    memoryDB.memories.push({
-                        timestamp: new Date().toISOString(),
-                        summary: summaryText,
-                        chatId: chatId
-                    });
-                    await fs.writeFile('long_term_memory.json', JSON.stringify(memoryDB, null, 2));
-                }
-            }
-        } catch (memoryError) {
-            console.error('[Long-Term Memory] 기억 생성 중 오류 발생 (명령 확인):', memoryError);
-        }
-        // =================================================================
-
+            // ★★★ 핵심: 이 경로에서는 기억/학습 로직 없이 바로 응답하고 종료합니다. ★★★
+            const usageMetadata = { totalTokenCount: 0 };
             res.json({ reply: finalReply, chatId: chatId, usage: usageMetadata });
-            return; // 함수를 여기서 종료합니다.
+            return;
         }
+
+        // --- 경로 2: 그 외 모든 일반적인 대화의 경우 ---
         if (chatId && pendingConfirmations[chatId]) {
             console.log('[Confirmation] 사용자가 작업을 취소했거나 다른 대답을 하여 대기 상태를 초기화합니다.');
             delete pendingConfirmations[chatId];
@@ -1824,15 +1710,10 @@ app.post('/api/chat', async (req, res) => {
             conversationHistory.push(newUserMessage);
         }
 
-        // 만약 클라이언트에서 'task'를 보냈고, 마지막 메시지에 파일 첨부가 있다면
         const latestMessageForTask = conversationHistory[conversationHistory.length - 1]; 
-        // .some()을 사용해 '-attachment'로 끝나는 타입이 하나라도 있는지 확인
         const hasAttachment = latestMessageForTask.parts.some(p => p.type && p.type.endsWith('-attachment'));
-
         if (task && hasAttachment) {
             console.log(`[Prompt Enhancer] 작업을 감지했습니다: ${task}`);
-
-            // task 종류에 따라 AI에게 내릴 지시사항을 정의
             const taskInstructions = {
                 'summarize_core': "다음 문서의 핵심 내용을 3~5줄로 요약해줘.",
                 'summarize_simple': "다음 문서를 초등학생도 이해할 수 있도록 아주 쉽게 요약해줘.",
@@ -1886,17 +1767,11 @@ app.post('/api/chat', async (req, res) => {
                     Now, analyze the document below and generate the JSON object.`,
 
             };
-
             const instructionText = taskInstructions[task] || "다음 문서를 분석해줘.";
-
-            // 기존의 텍스트 파트를 찾아서 맨 앞에 지시사항을 추가
             let textPart = latestMessageForTask.parts.find(p => p.type === 'text'); 
-            
             if (textPart) {
-                // 지시사항을 파일 내용보다 *앞에* 두는 것이 AI의 이해도를 높임
                 textPart.text = `${instructionText}\n\n---\n\n${textPart.text || ''}`;
             } else {
-                // 텍스트 파트가 없는 경우(이미지만 올리는 등)를 대비해 새로 추가
                 latestMessageForTask.parts.unshift({ type: 'text', text: instructionText }); 
             }
             console.log(`[Prompt Enhancer] 프롬프트를 성공적으로 보강했습니다.`);
@@ -1906,69 +1781,41 @@ app.post('/api/chat', async (req, res) => {
             const lastUserText = newUserMessage.parts.find(p => p.type === 'text')?.text || '';
             const urlRegex = /(https?:\/\/[^\s]+)/g;
             const foundUrls = lastUserText.match(urlRegex);
-
             if (foundUrls) {
                 const firstUrl = foundUrls[0];
                 let systemNote = '';
-
                 if (firstUrl.includes('youtube.com') || firstUrl.includes('youtu.be')) {
-                    systemNote = `(시스템 노트: 위 메시지에 YouTube URL이 포함되어 있습니다. 내용을 파악하려면 'getYoutubeTranscript' 도구를 사용하세요.)`;
+                    systemNote = `(시스템 노트: 위 메시지에 YouTube URL이 포함되어 있습니다...)`;
                 } else {
-                    systemNote = `(시스템 노트: 위 메시지에 URL이 포함되어 있습니다. 내용을 파악하려면 'scrapeWebsite' 도구를 사용하세요.)`;
+                    systemNote = `(시스템 노트: 위 메시지에 URL이 포함되어 있습니다...)`;
                 }
-
                 const enrichedPromptPart = { type: 'text', text: `${lastUserText}\n\n${systemNote}` };
                 const originalParts = newUserMessage.parts.filter(p => p.type !== 'text');
                 conversationHistory[conversationHistory.length - 1].parts = [...originalParts, enrichedPromptPart];
-                
                 console.log(`[Prompt Enhancer] URL을 감지하여 프롬프트를 보강했습니다.`);
             }
         }
         
-        const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-
         let historyForAI = [...conversationHistory];
 
-        // [✅ 장기 기억 회상] (개선 버전: '최근 기억'을 직접 주입하는 방식)
         try {
-            // [✅ 1. 복잡한 관련성 검사 AI 호출을 모두 제거합니다.]
-
-            // [✅ 2. 파일 대신, 메모리에 있는 memoryCache를 직접 사용합니다.]
             if (memoryCache && memoryCache.length > 0) {
-                
-                // [✅ 3. 가장 최근의 기억 5개를 가져옵니다. (slice(-5))]
                 const recentMemories = memoryCache.slice(-5);
-                
-                const memoryContext = recentMemories
-                    .map(mem => `- ${mem.summary}`) // 각 기억을 "- 요약 내용" 형태로 만듭니다.
-                    .join('\n'); // 각 줄을 엔터(줄바꿈)로 구분합니다.
-
-                // [✅ 4. 이 기억들을 '시스템 노트'로 만들어 AI의 대화 문맥에 주입합니다.]
+                const memoryContext = recentMemories.map(mem => `- ${mem.summary}`).join('\n');
                 const memorySystemPrompt = {
-                    role: 'system', // 이 메시지는 대화가 아니라 시스템 지침임을 명시
-                    parts: [{
-                        type: 'text',
-                        text: `(시스템 노트: 다음은 사용자와의 최근 대화 요약입니다. 이 맥락을 참고하여 사용자의 질문에 답변하세요. 사용자는 이 노트를 볼 수 없습니다.)\n\n[최근 대화 기록]\n${memoryContext}`
-                    }]
+                    role: 'system',
+                    parts: [{ type: 'text', text: `(시스템 노트: 다음은 사용자와의 최근 대화 요약입니다...)\n\n[최근 대화 기록]\n${memoryContext}` }]
                 };
-
-                // historyForAI의 맨 앞에 시스템 노트를 추가합니다.
                 historyForAI.unshift(memorySystemPrompt); 
-                
                 console.log(`[Long-Term Memory] ${recentMemories.length}개의 최근 기억을 AI의 단기 기억에 주입했습니다.`);
             }
         } catch (memoryError) {
             console.error('[Long-Term Memory] An error occurred during memory recall:', memoryError);
         }
-        // -----------------------------------------------------------------
         
         const generationConfig = {};
-        if (temperature !== undefined && temperature >= 0 && temperature <= 2) {
-            generationConfig.temperature = temperature;
-        }
-        if (topP !== undefined && topP >= 0.1 && topP <= 1.0) {
-            generationConfig.topP = topP;
-        }
+        if (temperature !== undefined) generationConfig.temperature = temperature;
+        if (topP !== undefined) generationConfig.topP = topP;
         
         console.log(`[API] Generation config:`, generationConfig);
         
@@ -2003,10 +1850,7 @@ app.post('/api/chat', async (req, res) => {
               }
             ]
         });
-
         
-
-        // [✅ 최종 수정] AI에게 모든 도구의 존재를 명확하게 각인시키는 시스템 프롬프트
         const toolsSystemPrompt = `
 You are an AI assistant with access to a suite of tools. When a user asks a question, first determine if any of your tools can help.
 
@@ -2058,12 +1902,8 @@ Analyze the user's request and call the most appropriate tool with the correct p
         
         const chat = model.startChat({ history: chatHistoryForAI });
         
-        // [✅ 수정] 토큰 사용량 계산을 위해 변수 선언
         let totalTokenCount = 0;
-        
         const result = await chat.sendMessage(userMessageParts);
-
-        // [✅ 수정] 첫 번째 API 호출의 토큰 사용량 추가
         totalTokenCount += result.response?.usageMetadata?.totalTokenCount || 0;
 
         const response = result.response;
@@ -2072,148 +1912,158 @@ Analyze the user's request and call the most appropriate tool with the correct p
         let finalReply;
 
         if (functionCalls && functionCalls.length > 0) {
-            const functionCall = functionCalls[0];
-            // [✅ 핵심 수정] deAnonymize 로직을 여기서 미리 하지 않습니다.
-            const { name, args } = functionCall; 
+    const functionCall = functionCalls[0];
+    const { name, args } = functionCall; 
 
-            if (tools[name]) {
-                // [✅ 핵심 수정] 각 도구 함수를 호출하기 '직전'에 필요한 인자만 복원합니다.
-                const deAnonymizedArgs = {};
-                for (const key in args) {
-                    if (typeof args[key] === 'string') {
-                        deAnonymizedArgs[key] = deAnonymizeText(args[key]);
-                    } else {
-                        deAnonymizedArgs[key] = args[key]; // 문자열이 아니면 그대로 둠
-                    }
-                }
-
-                // 도구 함수를 호출할 때는 '복원된' deAnonymizedArgs를 사용합니다.
-                let functionResult;
-                // utonomousResearcher를 호출할 때만 특별히 modelName을 넘겨줍니다.
-                if (name === 'autonomousResearcher') {
-                    functionResult = await tools[name](deAnonymizedArgs, modelName);
-                } else {
-                    // 다른 모든 일반 도구들은 기존 방식 그대로 호출합니다.
-                    functionResult = await tools[name](deAnonymizedArgs);
-                }
-                let secondResult;
-
-            try {
-                const parsedResult = JSON.parse(functionResult);
-                if (parsedResult && parsedResult.needsConfirmation) {
-                    pendingConfirmations[chatId] = parsedResult;
-                    const confirmationPrompt = `The user wants to execute the command(s) '${JSON.stringify(parsedResult.details)}'. Your task is to ask the user for confirmation to proceed. Keep your question concise and clear, in Korean. For example: "알겠습니다. 다음 명령어를 실행하려고 합니다: [명령어]. 계속할까요? (Y/N)"`;
-                    secondResult = await chat.sendMessage(confirmationPrompt);
-                    finalReply = { type: 'text', text: secondResult.response.text() };
-                    if (secondResult) {
-                        totalTokenCount += secondResult.response.usageMetadata?.totalTokenCount || 0;
-                    }
-                } else {
-                    throw new Error("Not a confirmation request.");
-                }
-            } catch (e) {
-                // [✅ 핵심 수정] 연계 실행 로직에도 복원된 deAnonymizedArgs를 사용하도록 간접적으로 수정됩니다.
-                if (name === 'convertNaturalDateToISO') {
-                    try {
-                        const calendarArgs = JSON.parse(functionResult);
-                        // getCalendarEvents는 인자가 없으므로 복원할 필요 없음
-                        functionResult = await tools['getCalendarEvents'](calendarArgs);
-                        const finalFunctionName = 'getCalendarEvents';
-                        const functionResponse = { name: finalFunctionName, response: { name: finalFunctionName, content: functionResult } };
-                        secondResult = await chat.sendMessage([{ functionResponse: functionResponse }]);
-                        finalReply = { type: 'text', text: secondResult.response.text() };
-                        if (secondResult) totalTokenCount += secondResult.response.usageMetadata?.totalTokenCount || 0;
-                    } catch (chainError) {
-                        const functionResponse = { name: name, response: { name: name, content: functionResult } };
-                        secondResult = await chat.sendMessage([{ functionResponse: functionResponse }]);
-                        finalReply = { type: 'text', text: secondResult.response.text() };
-                        if (secondResult) totalTokenCount += secondResult.response.usageMetadata?.totalTokenCount || 0;
-                    }
-                } else {
-                    if (name === 'getYoutubeTranscript' && functionResult.includes('자막을 찾을 수 없습니다')) {
-                        functionResult = await tools['scrapeWebsite'](args);
-                    }
-                    const functionResponse = { name: name, response: { name: name, content: functionResult } };
-                    secondResult = await chat.sendMessage([ { functionResponse: functionResponse } ]);
-                    finalReply = { type: 'text', text: secondResult.response.text() };
-                    if (secondResult) {
-                        totalTokenCount += secondResult.response.usageMetadata?.totalTokenCount || 0;
-                    }
-                }
+    if (tools[name]) {
+        const deAnonymizedArgs = {};
+        for (const key in args) {
+            if (typeof args[key] === 'string') {
+                deAnonymizedArgs[key] = deAnonymizeText(args[key]);
+            } else {
+                deAnonymizedArgs[key] = args[key];
             }
-        } else {
-            finalReply = { type: 'text', text: `오류: 알 수 없는 도구 '${name}'를 호출했습니다.` };
         }
-    } else {
-        finalReply = { type: 'text', text: response.text() };
-    }
 
-        // [핵심 수정] finalReply를 저장하고 응답하기 전에, 텍스트 내용을 복원합니다.
-        if (finalReply && finalReply.type === 'text' && finalReply.text) {
-            finalReply.text = deAnonymizeText(finalReply.text);
+        let functionResult;
+        if (name === 'autonomousResearcher') {
+            functionResult = await tools[name](deAnonymizedArgs, modelName);
+        } else {
+            functionResult = await tools[name](deAnonymizedArgs);
         }
         
-        // --- 5. 대화 기록 저장 및 최종 응답 (기존과 동일) ---
+        let secondResult;
+        try {
+            // --- 1. '명령어 실행' 도구의 경우, 확인 절차를 거칩니다. ---
+            const parsedResult = JSON.parse(functionResult);
+            if (parsedResult && parsedResult.needsConfirmation) {
+                pendingConfirmations[chatId] = parsedResult;
+                const confirmationPrompt = `The user wants to execute the command(s) '${JSON.stringify(parsedResult.details)}'. Your task is to ask the user for confirmation to proceed. Keep your question concise and clear, in Korean. For example: "알겠습니다. 다음 명령어를 실행하려고 합니다: [명령어]. 계속할까요? (Y/N)"`;
+                secondResult = await chat.sendMessage(confirmationPrompt);
+                finalReply = { type: 'text', text: secondResult.response.text() };
+                if (secondResult) {
+                    totalTokenCount += secondResult.response.usageMetadata?.totalTokenCount || 0;
+                }
+            } else {
+                throw new Error("Not a confirmation request.");
+            }
+        } catch (e) {
+            // --- 2. 그 외 모든 일반 도구들의 결과를 처리합니다. ---
+            
+            // 2-1. '날짜 변환' -> '캘린더 조회' 처럼 연계가 필요한 경우
+            if (name === 'convertNaturalDateToISO') {
+                try {
+                    const calendarArgs = JSON.parse(functionResult);
+                    functionResult = await tools['getCalendarEvents'](calendarArgs);
+                    const finalFunctionName = 'getCalendarEvents';
+                    const functionResponse = { name: finalFunctionName, response: { name: finalFunctionName, content: functionResult } };
+                    secondResult = await chat.sendMessage([{ functionResponse: functionResponse }]);
+                    finalReply = { type: 'text', text: secondResult.response.text() };
+                    if (secondResult) totalTokenCount += secondResult.response.usageMetadata?.totalTokenCount || 0;
+                } catch (chainError) {
+                     // 연계 실패 시, 원래 결과라도 보고합니다.
+                    const functionResponse = { name: name, response: { name: name, content: functionResult } };
+                    secondResult = await chat.sendMessage([{ functionResponse: functionResponse }]);
+                    finalReply = { type: 'text', text: secondResult.response.text() };
+                    if (secondResult) totalTokenCount += secondResult.response.usageMetadata?.totalTokenCount || 0;
+                }
+            } 
+            // 2-2. ★★★ 여기가 바로 빠졌던 핵심 부분입니다! ★★★
+            //      날씨, 캘린더 등 모든 '일반 도구'의 결과를 AI에게 보고하는 로직
+            else {
+                // 유튜브 스크립트 추출 실패 시, 웹 스크래핑으로 자동 전환하는 예외 처리
+                if (name === 'getYoutubeTranscript' && functionResult.includes('자막을 찾을 수 없습니다')) {
+                    functionResult = await tools['scrapeWebsite'](args);
+                }
+                
+                // [보고서 작성] "AI 상사님, 'getWeather' 실행 결과는 '맑음, 25도' 입니다."
+                const functionResponse = { name: name, response: { name: name, content: functionResult } };
+                
+                // [보고] AI에게 보고서를 제출합니다.
+                secondResult = await chat.sendMessage([ { functionResponse: functionResponse } ]);
+                
+                // [최종 답변] 보고를 받은 AI 상사가 최종 답변을 생성합니다.
+                finalReply = { type: 'text', text: secondResult.response.text() };
+                if (secondResult) {
+                    totalTokenCount += secondResult.response.usageMetadata?.totalTokenCount || 0;
+                }
+            }
+        }
+    } else {
+        finalReply = { type: 'text', text: `오류: 알 수 없는 도구 '${name}'를 호출했습니다.` };
+    }
+} else {
+    finalReply = { type: 'text', text: response.text() };
+}
+        
+        // ★★★ 핵심: 모든 일반 대화는 이 마지막 부분에서 기억/저장됩니다. ★★★
         conversationHistory.push({ role: 'model', parts: [finalReply] });
         await fs.writeFile(chatFilePath, JSON.stringify(conversationHistory, null, 2));
         console.log(`[History] ${conversationHistory.length}개의 메시지를 ${chatId}.json 파일에 저장했습니다.`);
-        console.log(`[API] Total tokens used: ${totalTokenCount}`);
-
-        // =================================================================
-        // [✅ 수정 위치 1] 여기에 기억 저장 로직을 추가합니다.
-        // =================================================================
+        
+        // 여기에 AI 학습 로직을 다시 추가할 수 있습니다 (선택 사항)
         try {
-            // 대화가 최소 2개 이상 (사용자 질문, 모델 답변)일 때만 요약을 시도합니다.
-            if (conversationHistory.length >= 2) {
-                const conversationText = conversationHistory
-                    .map(m => `${m.role}: ${m.parts.map(p => p.type === 'text' ? p.text : `(${p.type})`).join(' ')}`)
-                    .join('\n');
+            const profile = JSON.parse(await fs.readFile(userProfilePath, 'utf-8'));
+            const conversationText = conversationHistory
+                .map(m => `${m.role}: ${m.parts.map(p => p.text).join('')}`)
+                .join('\n');
 
-                const summarizationPrompt = `다음 대화의 핵심 주제나 가장 중요한 정보를 한국어로 된 한 문장으로 요약해줘. 이 요약은 AI의 장기 기억으로 사용될 거야. 무엇이 논의되었거나 결정되었는지에 초점을 맞춰줘. 대화: ${conversationText}`;
+            const learningPrompt = `
+                You are a sharp and insightful Profile Analyst AI. Your mission is to analyze the [Recent Conversation] and identify if the user has revealed any new, certain, and meaningful information about themselves that is not already in their [Current User Profile].
 
-                // 요약 작업은 빠르고 저렴한 모델을 사용하는 것이 효율적입니다.
-                const summarizationModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-                const summaryResult = await summarizationModel.generateContent(summarizationPrompt);
-                const summaryText = summaryResult.response.text().trim();
+                Based on the conversation, identify ONLY ONE piece of new information related to the user's identity(name, role), preferences(likes, dislikes), or goals(current_tasks, long_term).
+                Then, suggest ONE SINGLE function call to update the user's profile using the available tools.
+                
+                Available Tools:
+                - rememberIdentity({key: "name" | "role", value: "string"})
+                - rememberPreference({type: "likes" | "dislikes", item: "string"})
+                - rememberGoal({type: "current_tasks", "long_term", goal: "string"})
 
-                if (summaryText) {
-                    console.log(`[Long-Term Memory] 새로운 기억 생성: ${summaryText}`);
-                    // 파일이 없을 수도 있으므로 try-catch로 안전하게 읽습니다.
-                    let memoryDB = { memories: [] };
-                    try {
-                        memoryDB = JSON.parse(await fs.readFile('long_term_memory.json', 'utf-8'));
-                    } catch (e) {
-                        console.log('[Long-Term Memory] 기존 메모리 파일이 없어 새로 생성합니다.');
-                    }
-                    
-                    memoryDB.memories.push({
-                        timestamp: new Date().toISOString(),
-                        summary: summaryText,
-                        chatId: chatId
-                    });
-                    await fs.writeFile('long_term_memory.json', JSON.stringify(memoryDB, null, 2));
-                }
+                Example:
+                - If user says "My name is Mond", suggest: rememberIdentity({key: "name", value: "Mond"})
+                - If user says "I really hate bugs", suggest: rememberPreference({type: "dislikes", item: "bugs"})
+                - If user says "My goal this year is to learn guitar", suggest: rememberGoal({type: "long_term", goal: "learn guitar"})
+
+                IMPORTANT RULES:
+                1. Only learn factual and certain information. Do not infer or guess.
+                2. If no new, certain information is found, you MUST respond with the single word: "NO_UPDATE".
+                3. Your response must be ONLY the function call or "NO_UPDATE". Do not add any other text.
+
+                [Current User Profile]:
+                ${JSON.stringify(profile, null, 2)}
+
+                [Recent Conversation]:
+                ${conversationText}
+
+                Now, suggest a function call to update the profile, or respond with "NO_UPDATE".
+            `;
+            
+            const learningModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+            const learningResult = await learningModel.generateContent(learningPrompt);
+            const suggestedCallText = learningResult.response.text();
+
+            if (suggestedCallText && !suggestedCallText.includes("NO_UPDATE")) {
+                console.log(`[AI Learning] Found new information to learn. Suggested update: ${suggestedCallText}`);
+            } else {
+                console.log('[AI Learning] No new information to learn from this conversation.');
             }
-        } catch (memoryError) {
-            console.error('[Long-Term Memory] 기억 생성 중 오류 발생:', memoryError);
-        }
-        // =================================================================
 
-        saveMemory(conversationHistory, chatId, genAI, modelName);
+        } catch (learningError) {
+            console.error('[AI Learning] An error occurred during the self-learning process:', learningError);
+        }
+
+        // 모든 작업이 끝난 후, 딱 한 번만 기억을 저장합니다.
+        saveMemory(conversationHistory, chatId, genAI, modelName); 
         
-        // =================================================================
-        // [✅ 여기에 이 한 줄을 추가해주세요!]
-        // 어떤 경우에도 가장 정확한 totalTokenCount를 기반으로 최종 사용량 객체를 만듭니다.
+        console.log('[API] 응답을 먼저 전송합니다. (기억 저장은 백그라운드에서 실행됩니다)');
+        
         const usageMetadata = { totalTokenCount: totalTokenCount || 0 };
-        // =================================================================
         
-        // [✅ 참고] 클라이언트에게 보내는 finalReply도 복원된 텍스트를 담고 있습니다.
         res.json({ 
             reply: finalReply, 
             chatId: chatId, 
             usage: usageMetadata
         });
-
 
     } catch (error) {
         // --- 6. 에러 처리 (기존과 동일) ---
