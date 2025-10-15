@@ -19,6 +19,7 @@ const XLSX = require('xlsx');
 const { google } = require('googleapis');
 const { formatISO, addDays, startOfDay, endOfDay } = require('date-fns');
 const cron = require('node-cron');
+const os = require('os');
 
 // --- 2. 전역 변수 및 상수 설정 ---
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -1225,6 +1226,55 @@ async function getDailyBriefing() {
         return '브리핑 데이터를 수집하는 중에 오류가 발생했습니다.';
     }
 }
+
+async function writeFile({ filename, content }) {
+    // 사용자의 바탕화면 경로를 동적으로 찾습니다.
+    const desktopPath = path.join(os.homedir(), 'Desktop');
+    const filePath = path.join(desktopPath, filename);
+
+    console.log(`[File System] 파일 저장 시도: ${filePath}`);
+    try {
+        await fs.writeFile(filePath, content, 'utf-8');
+        const successMessage = `성공적으로 바탕화면의 '${filename}' 파일에 내용을 저장했습니다.`;
+        console.log(successMessage);
+        return successMessage;
+    } catch (error) {
+        console.error(`[File System] 파일 저장 중 오류 발생:`, error);
+        return `파일을 저장하는 데 실패했습니다: ${error.message}`;
+    }
+}
+// ['슈퍼 도구' 만들기 - 워크플로우 설계 (createSummaryAndSave)]
+/**
+ * @description 현재까지의 대화 내용을 요약하고, 그 결과를 사용자의 바탕화면에 텍스트 파일로 저장합니다.
+ * @param {string} topic - 요약할 대화의 주제이자, 파일 이름의 기반이 됩니다.
+ */
+async function createSummaryAndSave({ topic }, conversationHistory, genAI) {
+    console.log(`[Workflow] '요약 후 저장' 워크플로우 시작. 주제: ${topic}`);
+    
+    try {
+        // 1. [요약] 현재까지의 대화 기록을 텍스트로 변환합니다.
+        const conversationText = conversationHistory
+            .map(m => `${m.role}: ${m.parts.map(p => p.text || '').join(' ')}`)
+            .join('\n');
+
+        const prompt = `다음 대화 내용을 "${topic}"이라는 주제에 맞춰서, 중요한 핵심만 간추려 상세한 회의록 형식으로 요약해줘. 대화 내용:\n\n${conversationText}`;
+
+        // 2. [AI 호출] 요약을 위해 AI에게 작업을 요청합니다.
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' }); // 요약은 빠른 모델 사용
+        const result = await model.generateContent(prompt);
+        const summaryContent = result.response.text();
+
+        // 3. [파일 쓰기] 방금 만든 writeFile 도구를 호출합니다.
+        const filename = `${topic.replace(/ /g, '_')}_${new Date().toISOString().split('T')[0]}.txt`;
+        const writeFileResult = await writeFile({ filename: filename, content: summaryContent });
+
+        return writeFileResult; // writeFile의 성공/실패 메시지를 그대로 반환합니다.
+
+    } catch (error) {
+        console.error(`[Workflow] '요약 후 저장' 중 오류 발생:`, error);
+        return `워크플로우 처리 중 오류가 발생했습니다: ${error.message}`;
+    }
+}
 // ['자율적 연구원' 슈퍼 도구의 입구를 만듭니다.
 /**
  * @description 자율 연구원: 특정 주제에 대해 웹 검색, 정보 수집, 분석, 종합하여 최종 보고서를 생성하는 복합적인 작업을 수행합니다.
@@ -1577,7 +1627,9 @@ const tools = {
   executeMultipleCommands,
   autonomousResearcher,
   addInterest,
-  listInterests
+  listInterests,
+  writeFile,
+  // createSummaryAndSave는 조금 특별해서 여기엔 등록하지 않습니다.
   // analyzeMusic, // <-- 이 기능은 파이썬 서버를 켜야 하므로 일단 주석 처리
 };
 
@@ -1846,6 +1898,9 @@ app.post('/api/chat', async (req, res) => {
                   { name: 'executeMultipleCommands', description: '사용자가 "A하고 B해줘", "그리고 C도 해줘" 와 같이 한 번에 여러 개의 시스템 명령을 요청할 때 사용합니다. 모든 명령어를 분석하여 command 문자열의 배열(array) 형태로 만들어 한 번에 호출해야 합니다.', parameters: { type: 'object', properties: { commands: { type: 'array', description: '실행할 셸 명령어들의 목록. 예: ["notepad", "calc"]', items: { type: 'string' } } }, required: ['commands'] } },
                   { name: 'getDailyBriefing', description: '사용자가 "오늘의 브리핑", "하루 요약해줘" 등 아침 브리핑을 명시적으로 요청하거나, 브리핑을 시작하자는 제안에 "응", "네", "좋아", "시작해" 라고 긍정적으로 대답했을 때 사용합니다. 캘린더, 할 일, 뉴스를 종합하여 하루를 요약합니다.',  parameters: { type: 'object', properties: {} } },
                   { name: "autonomousResearcher", description: "This is the PRIMARY tool for answering broad, open-ended research questions that require multiple steps of investigation. You MUST use this tool for requests like 'tell me about Neuralink technology', 'write a report on the history of AI', or any topic that requires gathering information from multiple web pages or videos to form a comprehensive answer.", parameters: { type: "object", properties: { topic: { type: "string",  description: "조사하고 보고서를 작성할 주제" }, output_format: { type: "string",  enum: ["text", "ppt"],  description: "최종 결과물의 형식을 지정합니다. 사용자가 '보고서', '요약', '글'을 원하면 'text'로, '발표 자료', 'PPT', '슬라이드'를 원하면 'ppt'로 설정하세요. 지정하지 않으면 'text'가 기본값입니다." } }, required: ["topic"]  } },
+                  { name: 'writeFile',  description: '계산된 결과, 요약된 텍스트, 또는 사용자가 제공한 특정 내용을 사용자의 로컬 컴퓨터(바탕화면)에 파일로 저장할 때 사용합니다.',  parameters: {  type: 'object',  properties: {  filename: { type: 'string', description: '저장할 파일의 이름. 예: "회의록.txt"' }, content: { type: 'string', description: '파일에 쓸 실제 텍스트 내용.' }  },  required: ['filename', 'content']  } },
+                            // 여기에 '요약 후 저장' 기능을 위한 새로운 '가상 도구' 설명서를 추가합니다. // 이것은 AI에게 "이런 일을 할 수 있다"고 알려주는 '메뉴판' 역할을 합니다.
+                  { name: 'createSummaryAndSave', description: '사용자가 "방금 대화 내용 저장해줘", "회의록 만들어줘", "아이디어 정리해서 파일로 만들어줘" 등 현재 대화의 맥락을 요약하여 파일로 저장해달라고 요청할 때 사용합니다.', parameters: { type: 'object', properties: { topic: { type: 'string', description: '요약할 대화의 핵심 주제. 이 주제가 파일 이름이 됩니다. 예: "프로젝트 회의록"' } }, required: ['topic'] } }
                 ]
               }
             ]
@@ -1915,7 +1970,8 @@ Analyze the user's request and call the most appropriate tool with the correct p
     const functionCall = functionCalls[0];
     const { name, args } = functionCall; 
 
-    if (tools[name]) {
+    // ★★★ "또는 이름이 'createSummaryAndSave' 라면 통과시켜줘" 라는 조건을 추가 ★★★
+    if (tools[name] || name === 'createSummaryAndSave') { 
         const deAnonymizedArgs = {};
         for (const key in args) {
             if (typeof args[key] === 'string') {
@@ -1926,9 +1982,14 @@ Analyze the user's request and call the most appropriate tool with the correct p
         }
 
         let functionResult;
+        
         if (name === 'autonomousResearcher') {
             functionResult = await tools[name](deAnonymizedArgs, modelName);
-        } else {
+        } 
+        else if (name === 'createSummaryAndSave') {
+            functionResult = await createSummaryAndSave(deAnonymizedArgs, conversationHistory, genAI);
+        } 
+        else {
             functionResult = await tools[name](deAnonymizedArgs);
         }
         
