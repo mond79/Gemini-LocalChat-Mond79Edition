@@ -2205,6 +2205,33 @@ async function checkAndRunDelayedResearcherJob() {
         console.log('[Job Scheduler] 실행할 지연된 연구원 작업이 없습니다.');
     }
 }
+
+// 자정 작업을 위한 지각 처리 함수
+async function checkAndRunDelayedGardenerJob() {
+    console.log('[Job Scheduler] 지연된 기억 정원사 작업이 있는지 확인합니다...');
+    const now = new Date();
+    
+    // 오늘 자정(0시 0분)을 기준으로 시간 객체 생성
+    const todayMidnight = new Date();
+    todayMidnight.setHours(0, 0, 0, 0);
+
+    // 'memoryGardener'라는 이름으로 마지막 실행 시간을 가져옵니다.
+    const lastRun = await dbManager.getLastRunTime('memoryGardener');
+
+    // 조건: 지금 시간이 자정을 지났고, 마지막 실행 기록이 없거나 오늘 자정 이전일 경우
+    if (now > todayMidnight && (!lastRun || lastRun < todayMidnight)) {
+        console.log(`[Job Scheduler] 지연된 'Memory Gardener' 작업을 발견하여 지금 실행합니다.`);
+        try {
+            await runMemoryGardenerProcess(); // 우리의 새로운 함수 호출!
+            await dbManager.recordRunTime('memoryGardener'); // 성공하면 실행 시간 기록
+            console.log('[Job Scheduler] 지연된 기억 정원사 작업이 성공적으로 완료되었습니다.');
+        } catch (error) {
+            console.error('[Job Scheduler] 지연된 기억 정원사 작업 실행 중 오류 발생:', error);
+        }
+    } else {
+        console.log('[Job Scheduler] 실행할 지연된 기억 정원사 작업이 없습니다.');
+    }
+}
 // 매일 아침 7시에 '자율 연구' 작업을 실행합니다.
 cron.schedule('0 7 * * *', async () => {
     console.log('[Cron Job - Autonomous Researcher] 정기 작업을 시작합니다...');
@@ -2264,6 +2291,97 @@ cron.schedule('0 3 * * *', async () => {
     scheduled: true,
     timezone: "Asia/Seoul"
 });
+
+// ✨ 9차 진화: '기억의 정원사' 핵심 로직
+async function runMemoryGardenerProcess() {
+    // --- 1. 자기 성찰 (Reflective AI) ---
+    console.log('[Memory Gardener] STEP 1: 어제의 대화를 바탕으로 자기 성찰을 시작합니다.');
+
+    // 어제 날짜의 모든 기억을 DB에서 가져옴
+    const allMemories = dbManager.getAllMemories();
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+    
+    // 타임존 문제 방지를 위해 날짜 문자열(YYYY-MM-DD)로 비교
+    const yesterdayDateString = yesterday.toISOString().split('T')[0];
+
+    const yesterdayMemories = allMemories.filter(mem => {
+        // DB에서 가져온 timestamp (ISO 문자열)를 날짜 문자열로 변환하여 비교
+        return mem.timestamp.startsWith(yesterdayDateString);
+    });
+
+    if (yesterdayMemories.length === 0) {
+        console.log('[Memory Gardener] 어제는 대화 기록이 없었으므로 성찰을 건너뜁니다.');
+    } else {
+        const memoriesText = yesterdayMemories.map(m => `- ${m.summary}`).join('\n');
+        
+        const reflectionPrompt = `
+            당신은 어제의 대화 기록을 분석하여 스스로 성장하는 AI입니다.
+            아래의 [어제 대화 요약]을 바탕으로, 다음 두 가지 질문에 대해 각각 한 문장으로 간결하게 답변해주세요.
+
+            1. 어제 사용자와의 대화를 통해 새롭게 배운 가장 중요한 사실이나 정보는 무엇입니까?
+            2. 내일 사용자와 더 나은 대화를 하기 위해 개선해야 할 점이 있다면 무엇입니까?
+
+            **응답 형식 (반드시 이 JSON 형식을 지켜주세요. 다른 설명은 절대 추가하지 마세요):**
+            {
+                "learned": "어제 배운 점에 대한 한 문장 요약입니다.",
+                "improvements": "개선할 점에 대한 한 문장 요약입니다."
+            }
+
+            [어제 대화 요약]:
+            ${memoriesText}
+        `;
+
+        try {
+            const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+            // 비용 효율적인 Flash 모델 사용
+            const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+            const result = await model.generateContent(reflectionPrompt);
+            
+            // AI가 생성한 텍스트에서 JSON 부분만 정확히 추출
+            const responseText = result.response.text();
+            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) {
+                throw new Error("AI 응답에서 유효한 JSON을 찾을 수 없습니다.");
+            }
+            const reflectionJSON = JSON.parse(jsonMatch[0]);
+
+            // ✨ 성찰 결과를 DB에 저장하는 함수 (이 함수는 다음 단계에서 db-manager.js에 만들 것입니다.)
+            dbManager.saveAiReflection(yesterdayDateString, reflectionJSON.learned, reflectionJSON.improvements);
+            
+            console.log(`[Memory Gardener] 자기 성찰 완료:`);
+            console.log(`  - 어제 배운 점: ${reflectionJSON.learned}`);
+            console.log(`  - 개선할 점: ${reflectionJSON.improvements}`);
+
+        } catch (error) {
+            console.error('[Memory Gardener] 자기 성찰 중 AI 호출 또는 JSON 파싱 오류:', error);
+        }
+    }
+
+    // --- (향후) 2. 의미 클러스터링 ---
+    console.log('[Memory Gardener] STEP 2: (향후 구현 예정) 의미 클러스터링을 시작합니다.');
+
+    // --- (향후) 3. 기억 압축 ---
+    console.log('[Memory Gardener] STEP 3: (향후 구현 예정) 기억 압축을 시작합니다.');
+}
+
+// 매일 자정(0시 0분)에 '기억의 정원사' 프로세스 실행
+cron.schedule('0 0 * * *', async () => {
+    console.log('[Memory Gardener] 자정이 되었습니다. 기억 정리 및 성찰을 시작합니다...');
+    try {
+        // 이 runMemoryGardenerProcess 함수는 다음 단계에서 만들 것입니다.
+        await runMemoryGardenerProcess(); 
+        await dbManager.recordRunTime('memoryGardener');
+        console.log('[Memory Gardener] 오늘의 기억 정리 및 성찰 작업을 성공적으로 완료했습니다.');
+    } catch (error) {
+        console.error('[Memory Gardener] 작업 중 심각한 오류가 발생했습니다:', error);
+    }
+}, {
+    scheduled: true,
+    timezone: "Asia/Seoul"
+});
+
 // --- 7. 서버 실행 (가장 마지막에!) ---
 async function startServer() {
     console.log('[Server Startup] 서버 시작 절차를 개시합니다...');
@@ -2274,6 +2392,7 @@ async function startServer() {
     // 2. 혹시 놓친 작업이 있으면 실행합니다.
     await checkAndRunDelayedJob(); // 메모리 프로파일러(3시) 지각 확인
     await checkAndRunDelayedResearcherJob(); // 자율 연구원(7시) 지각 확인
+    await checkAndRunDelayedGardenerJob(); // 기억 정원사 (자정) 지각 확인
 
     // 3. 모든 준비가 끝나면 서버를 시작합니다.
     console.log('[Server Startup] 모든 준비가 완료되었습니다. 웹 서버를 실행합니다.');

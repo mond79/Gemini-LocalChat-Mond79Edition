@@ -34,7 +34,7 @@ function initializeDatabase() {
         );
     `);
 
-    // ✨ long_term_memory.json 구조에 맞춰 keywords와 sentiment 컬럼을 추가했습니다.
+    // long_term_memory.json 구조에 맞춰 keywords와 sentiment 컬럼을 추가했습니다.
     db.exec(`
         CREATE TABLE IF NOT EXISTS long_term_memory (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,6 +50,26 @@ function initializeDatabase() {
         CREATE TABLE IF NOT EXISTS job_tracker (
             job_name TEXT PRIMARY KEY,
             last_run TEXT NOT NULL
+        );
+    `);
+
+    // 클러스터링된 기억 그룹 테이블
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS memory_clusters (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cluster_name TEXT NOT NULL UNIQUE,
+            keywords TEXT,
+            last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+    `);
+
+    // AI의 자기 성찰 일기 테이블
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS ai_reflections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entry_date TEXT NOT NULL UNIQUE,
+            learned TEXT,
+            improvements TEXT
         );
     `);
 
@@ -129,7 +149,7 @@ function getAllMemories() {
     }));
 }
 
-// ✨ long_term_memory.json 구조에 맞춰 keywords와 sentiment도 함께 저장합니다.
+// long_term_memory.json 구조에 맞춰 keywords와 sentiment도 함께 저장합니다.
 function saveLongTermMemory(memoryObject) {
     const { summary, chatId, timestamp, keywords, sentiment } = memoryObject;
     const stmt = db.prepare(`
@@ -170,5 +190,22 @@ module.exports = {
     getAllMemories,
     saveLongTermMemory,
     getLastRunTime,
-    recordRunTime
+    recordRunTime,
+    saveAiReflection
 };
+
+// AI의 자기 성찰 결과를 DB에 저장하는 함수
+function saveAiReflection(entryDate, learned, improvements) {
+    try {
+        const stmt = db.prepare(`
+            INSERT OR REPLACE INTO ai_reflections (entry_date, learned, improvements) 
+            VALUES (?, ?, ?)
+        `);
+        stmt.run(entryDate, learned, improvements);
+        console.log(`[DB Manager] ${entryDate} 날짜의 AI 성찰 기록을 저장했습니다.`);
+        return true;
+    } catch (error) {
+        console.error('[DB Manager] AI 성찰 기록 저장 중 오류:', error.message);
+        return false;
+    }
+}
