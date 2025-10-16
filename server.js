@@ -569,25 +569,22 @@ function formatHistoryForGoogleAI(history) {
                     return { text: anonymizeText(part.text) };
                 }
                 if (part.type === 'image' || part.type === 'audio') {
-                    if (part.data && part.data.startsWith('data:')) {
-                        const base64Data = part.data.split(',')[1] || '';
-                        try {
-                            const buffer = Buffer.from(base64Data, 'base64');
-                            const reEncodedData = buffer.toString('base64');
-                            return { 
-                                inlineData: { 
-                                    mimeType: part.mimeType, 
-                                    data: reEncodedData
-                                } 
-                            };
-                        } catch (e) {
-                            console.error('Base64 재인코딩 실패:', e);
-                            return null;
-                        }
+                    // 1. 원본 Base64 데이터를 가져옵니다.
+                    let base64Data = part.data || '';
+
+                    // 2. 데이터가 'data:' URI 형식이라면, 순수 Base64 부분만 추출합니다.
+                    if (base64Data.startsWith('data:')) {
+                        base64Data = base64Data.split(',')[1] || '';
                     }
-                    return null;
+
+                    // 3. 불필요한 재인코딩 없이, Gemini API가 요구하는 형식으로 즉시 반환합니다.
+                    return {
+                        inlineData: {
+                            mimeType: part.mimeType,
+                            data: base64Data
+                        }
+                    };
                 }
-                return null;
             })
             .filter(Boolean)
     })).filter(msg => msg.parts.length > 0);
