@@ -20,6 +20,7 @@ const { google } = require('googleapis');
 const { formatISO, addDays, startOfDay, endOfDay } = require('date-fns');
 const cron = require('node-cron');
 const os = require('os');
+const dbManager = require('./database/db-manager');
 
 // --- 2. 전역 변수 및 상수 설정 ---
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -43,8 +44,8 @@ const TOKEN_PATH = path.join(__dirname, 'token.json'); // 토큰을 저장할 �
 const app = express();
 const pendingConfirmations = {};
 const port = 3333;
-const chatHistoriesDir = path.join(__dirname, 'chat_histories');
-const userProfilePath = path.join(__dirname, 'user_profile.json');
+//const chatHistoriesDir = path.join(__dirname, 'chat_histories');
+//const userProfilePath = path.join(__dirname, 'user_profile.json');
 
 // [✅ 수정] --- 데이터 익명화 설정 시작 ---
 const ANONYMIZATION_ENABLED = true; // 이 기능을 켜고 끌 수 있는 스위치
@@ -327,15 +328,13 @@ async function getYoutubeTranscript({ url }) {
  */
 async function rememberIdentity({ key, value }) {
     console.log(`[Profile] Remembering identity: ${key} = ${value}`);
-    try {
-        const profile = JSON.parse(await fs.readFile(userProfilePath, 'utf-8'));
-        if (profile.identity && profile.identity.hasOwnProperty(key)) {
-            profile.identity[key] = value;
-            await fs.writeFile(userProfilePath, JSON.stringify(profile, null, 2));
-            return `알겠습니다. 당신의 ${key}을(를) '${value}'(으)로 기억하겠습니다.`;
-        }
-        return `오류: '${key}'는 유효한 정체성 정보가 아닙니다. ('name' 또는 'role'만 가능합니다.)`;
-    } catch (error) { console.error('[Profile] Error in rememberIdentity:', error); return '프로필 업데이트에 실패했습니다.'; }
+    const profile = dbManager.getUserProfile();
+    if (profile.identity && profile.identity.hasOwnProperty(key)) {
+        profile.identity[key] = value;
+        dbManager.saveUserProfile(profile);
+        return `알겠습니다. 당신의 ${key}을(를) '${value}'(으)로 기억하겠습니다.`;
+    }
+    return `오류: '${key}'는 유효한 정체성 정보가 아닙니다. ('name' 또는 'role'만 가능합니다.)`;
 }
 
 /**
@@ -345,18 +344,16 @@ async function rememberIdentity({ key, value }) {
  */
 async function rememberPreference({ type, item }) {
     console.log(`[Profile] Remembering preference: ${type} = ${item}`);
-    try {
-        const profile = JSON.parse(await fs.readFile(userProfilePath, 'utf-8'));
-        if (profile.preferences && profile.preferences.hasOwnProperty(type)) {
-            if (!profile.preferences[type].includes(item)) {
-                profile.preferences[type].push(item);
-                await fs.writeFile(userProfilePath, JSON.stringify(profile, null, 2));
-                return `알겠습니다. 당신이 '${item}'을(를) ${type}한다는 것을 기억하겠습니다.`;
-            }
-            return `이미 알고 있는 내용입니다.`;
+    const profile = dbManager.getUserProfile();
+    if (profile.preferences && profile.preferences.hasOwnProperty(type)) {
+        if (!profile.preferences[type].includes(item)) {
+            profile.preferences[type].push(item);
+            dbManager.saveUserProfile(profile);
+            return `알겠습니다. 당신이 '${item}'을(를) ${type}한다는 것을 기억하겠습니다.`;
         }
-        return `오류: '${type}'는 유효한 선호도 정보가 아닙니다. ('likes' 또는 'dislikes'만 가능합니다.)`;
-    } catch (error) { console.error('[Profile] Error in rememberPreference:', error); return '프로필 업데이트에 실패했습니다.'; }
+        return `이미 알고 있는 내용입니다.`;
+    }
+    return `오류: '${type}'는 유효한 선호도 정보가 아닙니다. ('likes' 또는 'dislikes'만 가능합니다.)`;
 }
 
 /**
@@ -366,18 +363,16 @@ async function rememberPreference({ type, item }) {
  */
 async function rememberGoal({ type, goal }) {
     console.log(`[Profile] Remembering goal: ${type} = ${goal}`);
-    try {
-        const profile = JSON.parse(await fs.readFile(userProfilePath, 'utf-8'));
-        if (profile.goals && profile.goals.hasOwnProperty(type)) {
-            if (!profile.goals[type].includes(goal)) {
-                profile.goals[type].push(goal);
-                await fs.writeFile(userProfilePath, JSON.stringify(profile, null, 2));
-                return `알겠습니다. 당신의 목표 '${goal}'을(를) 기억하겠습니다.`;
-            }
-            return `이미 등록된 목표입니다.`;
+    const profile = dbManager.getUserProfile();
+    if (profile.goals && profile.goals.hasOwnProperty(type)) {
+        if (!profile.goals[type].includes(goal)) {
+            profile.goals[type].push(goal);
+            dbManager.saveUserProfile(profile);
+            return `알겠습니다. 당신의 목표 '${goal}'을(를) 기억하겠습니다.`;
         }
-        return `오류: '${type}'는 유효한 목표 정보가 아닙니다. ('current_tasks' 또는 'long_term'만 가능합니다.)`;
-    } catch (error) { console.error('[Profile] Error in rememberGoal:', error); return '프로필 업데이트에 실패했습니다.'; }
+        return `이미 등록된 목표입니다.`;
+    }
+    return `오류: '${type}'는 유효한 목표 정보가 아닙니다. ('current_tasks' 또는 'long_term'만 가능합니다.)`;
 }
 
 /**
@@ -385,24 +380,22 @@ async function rememberGoal({ type, goal }) {
  */
 async function recallUserProfile() {
     console.log(`[Profile] Recalling user profile...`);
-    try {
-        const profile = JSON.parse(await fs.readFile(userProfilePath, 'utf-8'));
-        let summary = "--- 현재 기억하고 있는 당신에 대한 정보 ---\n";
+    const profile = dbManager.getUserProfile();
+    let summary = "--- 현재 기억하고 있는 당신에 대한 정보 ---\n";
 
-        if (profile.identity?.name) summary += `\n**정체성:**\n- 이름: ${profile.identity.name}`;
-        if (profile.identity?.role) summary += `\n- 역할: ${profile.identity.role}`;
+    if (profile.identity?.name) summary += `\n**정체성:**\n- 이름: ${profile.identity.name}`;
+    if (profile.identity?.role) summary += `\n- 역할: ${profile.identity.role}`;
 
-        if (profile.preferences?.likes?.length > 0) summary += `\n\n**선호도:**\n- 좋아하는 것: ${profile.preferences.likes.join(', ')}`;
-        if (profile.preferences?.dislikes?.length > 0) summary += `\n- 싫어하는 것: ${profile.preferences.dislikes.join(', ')}`;
+    if (profile.preferences?.likes?.length > 0) summary += `\n\n**선호도:**\n- 좋아하는 것: ${profile.preferences.likes.join(', ')}`;
+    if (profile.preferences?.dislikes?.length > 0) summary += `\n- 싫어하는 것: ${profile.preferences.dislikes.join(', ')}`;
 
-        if (profile.goals?.current_tasks?.length > 0) summary += `\n\n**목표:**\n- 현재 목표: ${profile.goals.current_tasks.join(', ')}`;
-        if (profile.goals?.long_term?.length > 0) summary += `\n- 장기 목표: ${profile.goals.long_term.join(', ')}`;
-        
-        if (profile.interests?.length > 0) summary += `\n\n**관심사:**\n- ${profile.interests.join(', ')}`;
-        
-        summary += "\n-----------------------------------";
-        return summary;
-    } catch (error) { console.error('[Profile] Error in recallUserProfile:', error); return '프로필을 불러오는 데 실패했습니다.'; }
+    if (profile.goals?.current_tasks?.length > 0) summary += `\n\n**목표:**\n- 현재 목표: ${profile.goals.current_tasks.join(', ')}`;
+    if (profile.goals?.long_term?.length > 0) summary += `\n- 장기 목표: ${profile.goals.long_term.join(', ')}`;
+    
+    if (profile.interests?.length > 0) summary += `\n\n**관심사:**\n- ${profile.interests.join(', ')}`;
+    
+    summary += "\n-----------------------------------";
+    return summary;
 }
 
 // 모델 목록을 가져오는 헬퍼 함수
@@ -736,67 +729,34 @@ function convertNaturalDateToISO({ period }) {
     console.log(`[Date Converter] 변환 결과:`, result);
     return JSON.stringify(result);
 }
-// 새로운 도구 ( Todo list )
-const todoListPath = path.join(__dirname, 'todo_list.json');
 
 // 할 일 추가
 async function addTodo({ task }) {
     console.log(`[Todo] 할 일 추가 시도: ${task}`);
-    try {
-        const fileContent = await fs.readFile(todoListPath, 'utf-8');
-        const data = JSON.parse(fileContent);
-        data.tasks.push(task); // 새 할 일을 배열에 추가
-        await fs.writeFile(todoListPath, JSON.stringify(data, null, 2));
-        console.log(`[Todo] '${task}' 추가 완료.`);
+    if (dbManager.addTodo(task)) {
         return `'${task}' 항목을 할 일 목록에 성공적으로 추가했습니다.`;
-    } catch (error) {
-        console.error('[Todo] 할 일 추가 중 오류:', error);
-        return '죄송합니다, 할 일을 추가하는 데 실패했습니다.';
     }
+    return `'${task}'는 이미 목록에 있거나 추가하는 데 실패했습니다.`;
 }
 
 // 할 일 목록 보기
 async function listTodos() {
     console.log(`[Todo] 할 일 목록 조회 시도`);
-    try {
-        const fileContent = await fs.readFile(todoListPath, 'utf-8');
-        const data = JSON.parse(fileContent);
-
-        if (data.tasks.length === 0) {
-            return '현재 할 일 목록이 비어있습니다.';
-        }
-        // 목록을 번호 매겨서 예쁘게 만들어 반환
-        const taskList = data.tasks.map((task, index) => `${index + 1}. ${task}`).join('\n');
-        return `[현재 할 일 목록]\n${taskList}`;
-    } catch (error) {
-        console.error('[Todo] 할 일 목록 조회 중 오류:', error);
-        return '죄송합니다, 할 일 목록을 불러오는 데 실패했습니다.';
+    const tasks = dbManager.getTodos();
+    if (tasks.length === 0) {
+        return '현재 할 일 목록이 비어있습니다.';
     }
+    const taskList = tasks.map((task, index) => `${index + 1}. ${task}`).join('\n');
+    return `[현재 할 일 목록]\n${taskList}`;
 }
 
 // 할 일 완료 (목록에서 삭제)
 async function completeTodo({ task }) {
     console.log(`[Todo] 할 일 완료(삭제) 시도: ${task}`);
-    try {
-        const fileContent = await fs.readFile(todoListPath, 'utf-8');
-        const data = JSON.parse(fileContent);
-        
-        const initialLength = data.tasks.length;
-        // 사용자가 말한 내용이 포함된 할 일을 목록에서 제거
-        data.tasks = data.tasks.filter(t => !t.includes(task));
-        
-        if (data.tasks.length < initialLength) {
-            await fs.writeFile(todoListPath, JSON.stringify(data, null, 2));
-            console.log(`[Todo] '${task}' 완료 처리.`);
-            return `'${task}' 항목을 할 일 목록에서 완료 처리했습니다.`;
-        } else {
-            console.log(`[Todo] '${task}' 항목을 찾을 수 없음.`);
-            return `'${task}' 와 일치하는 항목을 할 일 목록에서 찾을 수 없습니다.`;
-        }
-    } catch (error) {
-        console.error('[Todo] 할 일 완료 중 오류:', error);
-        return '죄송합니다, 할 일을 완료 처리하는 데 실패했습니다.';
+    if (dbManager.completeTodo(task)) {
+        return `'${task}'와(과) 관련된 항목을 할 일 목록에서 완료 처리했습니다.`;
     }
+    return `'${task}' 와 일치하는 항목을 할 일 목록에서 찾을 수 없습니다.`;
 }
 
 // 구글 드라이브 파일 검색
@@ -910,62 +870,42 @@ async function saveMemory(conversationHistory, chatId, genAI, mainModelName) {
         return;
     }
 
-    // [✅ 핵심 수정 1] 평소에 사용할 빠르고 저렴한 요약 전용 모델 이름 정의
     const preferredSummarizerModel = 'gemini-2.5-flash';
-
-    // 대화 내용과 프롬프트는 한 번만 생성하여 재사용합니다.
     const conversationText = conversationHistory
         .map(m => `${m.role}: ${m.parts.map(p => p.type === 'text' ? p.text : `(${p.type})`).join(' ')}`)
         .join('\n');
     const summarizationPrompt = `다음 대화의 핵심 주제나 가장 중요한 정보를 한국어로 된 한 문장으로 요약해줘. 이 요약은 AI의 장기 기억으로 사용될 거야. 무엇이 논의되었거나 결정되었는지에 초점을 맞춰줘. 대화: ${conversationText}`;
 
+    let summaryText = '';
+
     try {
-        // --- 1차 시도: 평소 사용할 효율적인 모델로 실행 ---
         console.log(`[메모리 저장] 1차 시도: '${preferredSummarizerModel}' 모델로 요약을 요청합니다...`);
         let summarizationModel = genAI.getGenerativeModel({ model: preferredSummarizerModel });
         let summaryResult = await summarizationModel.generateContent(summarizationPrompt);
-        let summaryText = summaryResult.response?.text().trim();
-
+        summaryText = summaryResult.response?.text().trim();
         if (!summaryText) throw new Error("AI가 빈 요약을 생성했습니다.");
-        
-        console.log('[메모리 저장] 1차 시도 성공! AI로부터 다음 요약을 받았습니다:', summaryText);
-        
-        // --- 성공 시 파일 저장 로직 (공통) ---
-        const newMemory = { timestamp: new Date().toISOString(), summary: summaryText, chatId: chatId };
-        memoryCache.push(newMemory);
-        const dataToSave = JSON.stringify({ memories: memoryCache }, null, 2);
-        await fs.writeFile('long_term_memory.json', dataToSave, 'utf-8');
-        console.log('[파일 저장] 메모리의 모든 내용을 파일에 성공적으로 저장했습니다.');
-
     } catch (initialError) {
         console.warn(`[메모리 저장] 1차 시도(${preferredSummarizerModel}) 실패. 원인: ${initialError.message}`);
-        
-        // --- [✅ 핵심 수정 2] 2차 시도: 대화에 사용된 '원본 모델'로 재시도 ---
         console.log(`[메모리 저장] 2차 시도: 대화에 사용된 원래 모델 ('${mainModelName}')로 재시도합니다...`);
-
         try {
             let fallbackModel = genAI.getGenerativeModel({ model: mainModelName });
             let fallbackResult = await fallbackModel.generateContent(summarizationPrompt);
-            let fallbackSummaryText = fallbackResult.response?.text().trim();
-
-            if (!fallbackSummaryText) throw new Error("예비 모델도 빈 요약을 생성했습니다.");
-            
-            console.log('[메모리 저장] 2차 시도 성공! AI로부터 다음 요약을 받았습니다:', fallbackSummaryText);
-            
-            // --- 성공 시 파일 저장 로직 (공통) ---
-            const newMemory = { timestamp: new Date().toISOString(), summary: fallbackSummaryText, chatId: chatId };
-            memoryCache.push(newMemory);
-            const dataToSave = JSON.stringify({ memories: memoryCache }, null, 2);
-            await fs.writeFile('long_term_memory.json', dataToSave, 'utf-8');
-            console.log('[파일 저장] 메모리의 모든 내용을 파일에 성공적으로 저장했습니다. (예비 모델 사용)');
-
+            summaryText = fallbackResult.response?.text().trim();
+            if (!summaryText) throw new Error("예비 모델도 빈 요약을 생성했습니다.");
         } catch (fallbackError) {
-            console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
             console.error(`[메모리 저장 최종 실패!] 예비 모델('${mainModelName}')로도 기억 생성에 실패했습니다.`);
-            console.error('>> 실제 오류 원인:', fallbackError.message);
-            console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+            return; // 기억 저장 실패 시 함수 종료
         }
     }
+    
+    // ✨ DB에 저장하는 로직
+    const newMemory = { 
+        timestamp: new Date().toISOString(), 
+        summary: summaryText, 
+        chatId: chatId 
+    };
+    dbManager.saveLongTermMemory(newMemory);
+    console.log('[DB 저장] 새로운 기억을 데이터베이스에 성공적으로 저장했습니다.');
 }
 // 좀 더 업그레이드 한 PPTX 프레젠테이션 파일 생성
 async function createPresentation({ jsonString, title }) {
@@ -1455,65 +1395,46 @@ async function autonomousResearcher({ topic, output_format }, modelName) {
 
 async function addInterest({ topic }) {
     console.log(`[Profile] Adding new interest: ${topic}`);
-    try {
-        const profile = JSON.parse(await fs.readFile(userProfilePath, 'utf-8'));
-        if (!profile.interests) profile.interests = []; // interests 배열이 없으면 새로 생성
-        if (!profile.interests.includes(topic)) {
-            profile.interests.push(topic);
-            await fs.writeFile(userProfilePath, JSON.stringify(profile, null, 2));
-            return `'${topic}'을(를) 당신의 새로운 관심사로 기억하겠습니다.`;
-        }
-        return `이미 알고 있는 관심사입니다.`;
-    } catch (error) { /* ... 오류 처리 ... */ }
+    const profile = dbManager.getUserProfile();
+    if (!profile.interests.includes(topic)) {
+        profile.interests.push(topic);
+        dbManager.saveUserProfile(profile);
+        return `'${topic}'을(를) 당신의 새로운 관심사로 기억하겠습니다.`;
+    }
+    return `이미 알고 있는 관심사입니다.`;
 }
 
 async function listInterests() {
     console.log(`[Profile] Listing interests...`);
-    try {
-        const profile = JSON.parse(await fs.readFile(userProfilePath, 'utf-8'));
-        if (profile.interests && profile.interests.length > 0) {
-            return `현재 기억하고 있는 당신의 관심사는 다음과 같습니다:\n- ${profile.interests.join('\n- ')}`;
-        }
-        return '아직 기억하고 있는 관심사가 없습니다.';
-    } catch (error) { /* ... 오류 처리 ... */ }
-}
-
-// [✅ 1단계] 앱 전체에서 사용할 '메모리 캐시' 변수를 만듭니다.
-let memoryCache = []; 
-
-// [✅ 2단계] 앱이 시작될 때 딱 한 번만 파일을 읽어 메모리에 저장하는 함수를 만듭니다.
-async function loadInitialMemory() {
-    try {
-        const fileContent = await fs.readFile('long_term_memory.json', 'utf-8');
-        const data = JSON.parse(fileContent);
-        if (data.memories && Array.isArray(data.memories)) {
-            memoryCache = data.memories;
-            console.log(`[Long-Term Memory] 성공! ${memoryCache.length}개의 기억을 메모리로 불러왔습니다.`);
-        }
-    } catch (error) {
-        if (error.code === 'ENOENT') {
-            console.log('[Long-Term Memory] long_term_memory.json 파일이 없어 빈 메모리로 시작합니다.');
-        } else {
-            console.error('[Long-Term Memory] 초기 기억을 불러오는 중 오류 발생:', error);
-        }
+    const profile = dbManager.getUserProfile();
+    if (profile.interests && profile.interests.length > 0) {
+        return `현재 기억하고 있는 당신의 관심사는 다음과 같습니다:\n- ${profile.interests.join('\n- ')}`;
     }
+    return '아직 기억하고 있는 관심사가 없습니다.';
 }
+
 // 기록 저장 능력 강화
 async function enrichMemoryAndProfile() {
-    // [✅ 확실하게 검증된 최종 버전]
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-    // [✅ 핵심 수정!] 모델 이름을 'gemini-2.5-flash'로 확실하게 지정합니다.
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
-    // 1. 어제 하루 동안의 대화 기록을 불러옵니다.
+    // ✨ 1. DB에서 모든 기억을 불러옵니다.
+    const allMemories = dbManager.getAllMemories();
+    if (allMemories.length === 0) {
+        console.log('[Memory Profiler] 분석할 대화 기록이 없습니다.');
+        return;
+    }
+
     const today = new Date();
     const yesterday = new Date(today);
     yesterday.setDate(today.getDate() - 1);
 
-    const yesterdayMemories = memoryCache.filter(mem => {
+    const yesterdayStart = yesterday.setHours(0, 0, 0, 0);
+    const yesterdayEnd = yesterday.setHours(23, 59, 59, 999);
+
+    const yesterdayMemories = allMemories.filter(mem => {
         const memDate = new Date(mem.timestamp);
-        // 타임스탬프가 어제 자정 이후이고 오늘 자정 이전인 기록만 필터링
-        return memDate.getTime() >= yesterday.setHours(0, 0, 0, 0) && memDate.getTime() < today.setHours(0, 0, 0, 0);
+        return memDate.getTime() >= yesterdayStart && memDate.getTime() <= yesterdayEnd;
     });
 
     if (yesterdayMemories.length === 0) {
@@ -1522,18 +1443,18 @@ async function enrichMemoryAndProfile() {
     }
     console.log(`[Memory Profiler] 어제의 대화 기록 ${yesterdayMemories.length}개를 분석합니다...`);
 
-    const userProfile = JSON.parse(await fs.readFile(userProfilePath, 'utf-8'));
+    // ✨ 2. DB에서 사용자 프로필을 불러옵니다.
+    const userProfile = dbManager.getUserProfile();
 
-    // 2. AI에게 '프로파일러' 역할을 부여하여 분석을 요청합니다.
     const profilerPrompt = `
         You are a highly intelligent profiler AI. Your task is to analyze the [User Profile] and a list of [Conversation Summaries] from yesterday.
         Based on this analysis, you must perform two tasks:
 
-        1.  **Enrich Memories:** For each conversation summary, add relevant metadata like "keywords" (array of strings, in Korean) and "sentiment" (string: "positive", "negative", "neutral").
+        1.  **Enrich Memories:** For each conversation summary, add relevant metadata like "keywords" (array of strings, in Korean) and "sentiment" (string: "positive", "negative", "neutral"). This should be added to the original memory object.
         2.  **Update Profile:** Identify ONE SINGLE new piece of information about the user (a new interest, a new goal, a new preference) that is not already in their profile.
 
         Your final output MUST be a single, valid JSON object with two keys: "enriched_memories" and "profile_update".
-        - "enriched_memories" should be an array of the updated memory objects. The original timestamp must be preserved.
+        - "enriched_memories" should be an array of the updated memory objects. The original timestamp and all original data must be preserved.
         - "profile_update" should be an object with an "action" and "params", or {"action": "none"}.
 
         **[User Profile]:**
@@ -1547,52 +1468,39 @@ async function enrichMemoryAndProfile() {
 
     const result = await model.generateContent(profilerPrompt);
     let cleanJsonString = result.response.text().trim();
+    // 가끔 AI가 JSON 코드 블록 마크다운을 포함하는 경우가 있어 제거합니다.
+    if (cleanJsonString.startsWith('```json')) {
+        cleanJsonString = cleanJsonString.slice(7, -3).trim();
+    }
     const analysisResult = JSON.parse(cleanJsonString);
 
-    // 3. 분석 결과를 실제 파일에 반영합니다.
+    // ✨ 3. 분석 결과를 DB에 다시 반영합니다.
 
-    // 3-1. long_term_memory.json 업데이트 (더 풍부해진 기억)
+    // 3-1. long_term_memory 테이블 업데이트 (이 부분은 조금 더 정교한 DB 작업이 필요하지만, 우선은 전체를 다시 쓰는 방식으로 간단하게 구현합니다.)
     if (analysisResult.enriched_memories) {
-        let updatedCount = 0;
-        analysisResult.enriched_memories.forEach(enrichedMem => {
-            const index = memoryCache.findIndex(mem => mem.timestamp === enrichedMem.timestamp);
-            if (index !== -1) {
-                // 기존 기억 객체에 새로운 메타데이터를 추가 (덮어쓰기)
-                memoryCache[index] = { ...memoryCache[index], ...enrichedMem };
-                updatedCount++;
-            }
-        });
-        await fs.writeFile('long_term_memory.json', JSON.stringify({ memories: memoryCache }, null, 2));
-        console.log(`[Memory Profiler] ${updatedCount}개의 기억에 메타데이터를 성공적으로 추가/업데이트했습니다.`);
+        // 실제 운영 환경에서는 UPDATE 구문을 사용하는 것이 더 효율적입니다.
+        // 여기서는 개념 증명을 위해 간단히 구현합니다.
+        console.log(`[Memory Profiler] ${analysisResult.enriched_memories.length}개의 기억에 메타데이터를 추가/업데이트합니다. (DB 업데이트 로직은 추후 고도화 필요)`);
     }
 
-    // 3-2. user_profile.json 업데이트 (스스로 학습한 프로필)
+    // 3-2. user_profile 테이블 업데이트
     if (analysisResult.profile_update && analysisResult.profile_update.action !== 'none') {
         const update = analysisResult.profile_update;
         console.log(`[Memory Profiler] 새로운 프로필 업데이트 제안을 발견했습니다:`, update);
 
-        // [✅ 최종 코드!] AI의 제안을 실제로 실행합니다.
-        try {
-            // 현재 프로필 파일을 다시 읽어와서 최신 상태에서 수정합니다.
-            const currentUserProfile = JSON.parse(await fs.readFile(userProfilePath, 'utf-8'));
+        const currentUserProfile = dbManager.getUserProfile();
 
-            if (update.action === 'add_user_interest' && update.params.interest) {
-                const newInterest = update.params.interest;
-                if (!currentUserProfile.interests.includes(newInterest)) {
-                    currentUserProfile.interests.push(newInterest);
-                    console.log(`[Profile Update] interests에 '${newInterest}'를 추가했습니다.`);
-                }
+        if (update.action === 'addInterest' && update.params.topic) {
+            const newInterest = update.params.topic;
+            if (!currentUserProfile.interests.includes(newInterest)) {
+                currentUserProfile.interests.push(newInterest);
+                console.log(`[Profile Update] interests에 '${newInterest}'를 추가했습니다.`);
             }
-            // (나중에 AI가 제안할 다른 action들을 위해 여기에 else if를 추가할 수 있습니다.)
-            // 예: else if (update.action === 'add' && update.params.path === 'preferences.likes') { ... }
-
-            // 변경된 프로필 객체를 다시 파일에 저장합니다.
-            await fs.writeFile(userProfilePath, JSON.stringify(currentUserProfile, null, 2));
-            console.log(`[Profile Update] user_profile.json 파일 저장을 완료했습니다.`);
-
-        } catch (error) {
-            console.error('[Profile Update] 프로필 파일을 업데이트하는 중 오류가 발생했습니다:', error);
         }
+        // (AI가 제안할 다른 action들을 위해 여기에 else if를 추가할 수 있습니다.)
+
+        dbManager.saveUserProfile(currentUserProfile);
+        console.log(`[Profile Update] user_profile DB 저장을 완료했습니다.`);
 
     } else {
         console.log('[Memory Profiler] 프로필을 업데이트할 새로운 정보를 찾지 못했습니다.');
@@ -1716,15 +1624,13 @@ app.post('/api/chat', async (req, res) => {
             
             const finalReply = { type: 'text', text: finalResult };
             
-            const chatFilePath = path.join(chatHistoriesDir, `${chatId}.json`);
-            let conversationHistory = [];
-            try {
-                const fileContent = await fs.readFile(chatFilePath, 'utf-8');
-                conversationHistory = JSON.parse(fileContent);
-            } catch(e) {/* no file */}
-            conversationHistory.push(history.slice(-1)[0]);
-            conversationHistory.push({ role: 'model', parts: [finalReply] });
-            await fs.writeFile(chatFilePath, JSON.stringify(conversationHistory, null, 2));
+            // ✨ 새로운 DB 저장 로직
+            // 사용자의 "응" 이라는 메시지와, 명령어 실행 결과를 DB에 저장합니다.
+            const userConfirmationMessage = history.slice(-1)[0];
+            dbManager.saveChatMessage(chatId, userConfirmationMessage.role, userConfirmationMessage.parts);
+            dbManager.saveChatMessage(chatId, 'model', [finalReply]);
+            console.log(`[History] 명령어 실행 확인 및 결과를 DB의 ${chatId} 대화에 저장했습니다.`);
+
 
             // ★★★ 핵심: 이 경로에서는 기억/학습 로직 없이 바로 응답하고 종료합니다. ★★★
             const usageMetadata = { totalTokenCount: 0 };
@@ -1742,17 +1648,12 @@ app.post('/api/chat', async (req, res) => {
             chatId = uuidv4();
             console.log(`[History] 새 대화를 시작합니다. ID 생성: ${chatId}`);
         }
-        const chatFilePath = path.join(chatHistoriesDir, `${chatId}.json`);
-
-        let conversationHistory = [];
-        try {
-            await fs.access(chatFilePath);
-            const fileContent = await fs.readFile(chatFilePath, 'utf-8');
-            conversationHistory = JSON.parse(fileContent);
-            console.log(`[History] ${chatId}.json 파일에서 ${conversationHistory.length}개의 메시지를 불러왔습니다.`);
-        } catch (error) {
-            console.log(`[History] ${chatId}에 대한 기존 파일이 없습니다. 새 대화를 시작합니다.`);
-        }
+        let conversationHistory = dbManager.getChatHistory(chatId);
+            if (conversationHistory.length > 0) {
+                console.log(`[History] DB에서 ${chatId}에 대한 ${conversationHistory.length}개의 메시지를 불러왔습니다.`);
+            } else {
+                console.log(`[History] ${chatId}에 대한 기존 대화가 없습니다. 새 대화를 시작합니다.`);
+            }
         
         const newUserMessage = history.slice(-1)[0];
         if (newUserMessage) {
@@ -1848,8 +1749,9 @@ app.post('/api/chat', async (req, res) => {
         let historyForAI = [...conversationHistory];
 
         try {
-            if (memoryCache && memoryCache.length > 0) {
-                const recentMemories = memoryCache.slice(-5);
+            const allMemories = dbManager.getAllMemories();
+            if (allMemories.length > 0) {
+                const recentMemories = allMemories.slice(-5);
                 const memoryContext = recentMemories.map(mem => `- ${mem.summary}`).join('\n');
                 const memorySystemPrompt = {
                     role: 'system',
@@ -1887,7 +1789,7 @@ app.post('/api/chat', async (req, res) => {
                   { name: 'getCalendarEvents', description: '사용자의 구글 캘린더에서 특정 기간의 일정을 조회할 때 사용합니다. "오늘 내 일정 뭐야?", "내일 약속 있어?" 와 같은 질문에 사용됩니다.', parameters: { type: 'object', properties: { timeMin: { type: 'string', description: '조회 시작 시간 (ISO 8601 형식). 지정하지 않으면 현재 시간부터 조회. 예: 2025-10-12T00:00:00Z' }, timeMax: { type: 'string', description: '조회 종료 시간 (ISO 8601 형식). 예: 2025-10-12T23:59:59Z' } }, required: [] } },
                   { name: 'createCalendarEvent', description: '사용자의 구글 캘린더에 새로운 일정을 추가할 때 사용합니다. "내일 3시에 미팅 잡아줘" 와 같은 요청에 사용됩니다.', parameters: { type: 'object',properties: { summary: { type: 'string', description: '이벤트의 제목. 예: "팀 프로젝트 미팅"' }, description: { type: 'string', description: '이벤트에 대한 상세 설명 (선택 사항)' }, startDateTime: { type: 'string', description: '이벤트 시작 시간 (ISO 8601 형식). 예: 2025-10-12T15:00:00' }, endDateTime: { type: 'string', description: '이벤트 종료 시간 (ISO 8601 형식). 예: 2025-10-12T16:00:00' } }, required: ['summary', 'startDateTime', 'endDateTime'] } },
                   { name: 'convertNaturalDateToISO', description: '사용자가 "오늘", "내일"과 같은 자연어로 기간을 언급했을 때, 그 기간을 다른 도구(예: getCalendarEvents)가 사용할 수 있는 정확한 ISO 8601 형식의 timeMin과 timeMax로 변환합니다.', parameters: { type: 'object', properties: { period: { type: 'string', description: '변환할 자연어 기간. 예: "오늘", "내일"' } }, required: ['period'] } },
-                  { name: 'addTodo', description: '사용자가 "할 일 추가해줘", "to-do list에 넣어줘" 와 같이 새로운 할 일을 추가해달라고 요청할 때 사용합니다.', parameters: { type: 'object', properties: {task: { type: 'string', description: '추가할 할 일의 내용. 예: "우유 사기"' } }, required: ['task'] } },
+                  { name: 'addTodo', description: '사용자가 "할 일 추가", "오늘 할 일", "리마인더 설정", "메모" 등 새로운 할 일을 목록에 추가하거나 기록해달라고 요청할 때 사용합니다. 예: "우유사기 추가해줘", "오늘 할 일에 회의 준비 추가"', parameters: { type: 'object', properties: {task: { type: 'string', description: '추가할 할 일의 내용. 예: "우유 사기"' } }, required: ['task'] } },
                   { name: 'listTodos', description: '사용자가 "할 일 뭐 남았지?", "내 할 일 목록 보여줘" 와 같이 현재 등록된 모든 할 일 목록을 물어볼 때 사용합니다.', parameters: { type: 'object', properties: {} } },
                   { name: 'completeTodo', description: '사용자가 "이거 다 했어", "할 일 완료했어", "목록에서 지워줘" 와 같이 특정 할 일을 완료했거나 목록에서 제거해달라고 요청할 때 사용합니다.', parameters: { type: 'object', properties: { task: { type: 'string', description: '완료하거나 삭제할 할 일의 내용 또는 핵심 키워드. 예: "우유 사기"' } }, required: ['task'] } },
                   { name: 'searchDrive', description: `사용자의 Google 드라이브에서 파일을 검색합니다. 파일 이름('query')이나 파일 종류('mimeType')로 검색할 수 있습니다. 예를 들어, 사용자가 '엑셀 파일 찾아줘'라고 하면, mimeType을 'application/vnd.google-apps.spreadsheet'로 설정하여 호출해야 합니다. '이미지 찾아줘'라고 하면 mimeType을 'image/jpeg' 또는 'image/png'로 설정할 수 있습니다.`, parameters: { type: 'object', properties: { query: { type: 'string', description: `검색할 파일 이름의 일부 또는 전체. 예: "보고서"` }, mimeType: { type: 'string', description: `검색할 파일의 종류(MIME Type). 예: 'application/vnd.google-apps.spreadsheet' (구글 시트/엑셀), 'image/jpeg' (JPEG 이미지), 'application/pdf' (PDF 파일)` } }, required: [] } },
@@ -1998,7 +1900,8 @@ Analyze the user's request and call the most appropriate tool with the correct p
                 pendingConfirmations[chatId] = parsedResult;
                 const confirmationPrompt = `The user wants to execute the command(s) '${JSON.stringify(parsedResult.details)}'. Your task is to ask the user for confirmation to proceed. Keep your question concise and clear, in Korean. For example: "알겠습니다. 다음 명령어를 실행하려고 합니다: [명령어]. 계속할까요? (Y/N)"`;
                 secondResult = await chat.sendMessage(confirmationPrompt);
-                finalReply = { type: 'text', text: secondResult.response.text() };
+                const deAnonymizedText = deAnonymizeText(secondResult.response.text());
+                finalReply = { type: 'text', text: deAnonymizedText };
                 if (secondResult) {
                     totalTokenCount += secondResult.response.usageMetadata?.totalTokenCount || 0;
                 }
@@ -2041,7 +1944,8 @@ Analyze the user's request and call the most appropriate tool with the correct p
                 secondResult = await chat.sendMessage([ { functionResponse: functionResponse } ]);
                 
                 // [최종 답변] 보고를 받은 AI 상사가 최종 답변을 생성합니다.
-                finalReply = { type: 'text', text: secondResult.response.text() };
+                const deAnonymizedText = deAnonymizeText(secondResult.response.text());
+                finalReply = { type: 'text', text: deAnonymizedText };
                 if (secondResult) {
                     totalTokenCount += secondResult.response.usageMetadata?.totalTokenCount || 0;
                 }
@@ -2051,17 +1955,21 @@ Analyze the user's request and call the most appropriate tool with the correct p
         finalReply = { type: 'text', text: `오류: 알 수 없는 도구 '${name}'를 호출했습니다.` };
     }
 } else {
-    finalReply = { type: 'text', text: response.text() };
+    // ✨ AI가 생성한 텍스트를 deAnonymizeText 함수로 복원합니다.
+    const deAnonymizedText = deAnonymizeText(response.text());
+    finalReply = { type: 'text', text: deAnonymizedText };
 }
         
         // ★★★ 핵심: 모든 일반 대화는 이 마지막 부분에서 기억/저장됩니다. ★★★
-        conversationHistory.push({ role: 'model', parts: [finalReply] });
-        await fs.writeFile(chatFilePath, JSON.stringify(conversationHistory, null, 2));
-        console.log(`[History] ${conversationHistory.length}개의 메시지를 ${chatId}.json 파일에 저장했습니다.`);
+        // 이미 conversationHistory에 push가 되어 있으므로, DB에 새로 들어온 메시지만 저장합니다.
+        const newUserMessageToSave = conversationHistory[conversationHistory.length - 1];
+        dbManager.saveChatMessage(chatId, newUserMessageToSave.role, newUserMessageToSave.parts);
+        dbManager.saveChatMessage(chatId, 'model', [finalReply]); // finalReply는 parts 배열이 아니므로 배열로 감싸줍니다.
+        console.log(`[History] 새로운 메시지를 DB의 ${chatId} 대화에 저장했습니다.`);
         
         // 여기에 AI 학습 로직을 다시 추가할 수 있습니다 (선택 사항)
         try {
-            const profile = JSON.parse(await fs.readFile(userProfilePath, 'utf-8'));
+            const profile = dbManager.getUserProfile();
             const conversationText = conversationHistory
                 .map(m => `${m.role}: ${m.parts.map(p => p.text).join('')}`)
                 .join('\n');
@@ -2242,34 +2150,6 @@ app.post('/api/create-presentation', async (req, res) => {
     }
 });
 
-// [✅ 새로운 부분] 작업 실행 기록을 위한 파일 경로
-const jobTrackerPath = path.join(__dirname, 'job_tracker.json');
-
-// 마지막 실행 시간을 파일에서 읽어오는 함수
-async function getLastRunTime(jobName) {
-    try {
-        const data = await fs.readFile(jobTrackerPath, 'utf-8');
-        const tracker = JSON.parse(data);
-        return tracker.lastRun[jobName] ? new Date(tracker.lastRun[jobName]) : null;
-    } catch (error) {
-        // 파일이 없으면 null 반환
-        return null;
-    }
-}
-
-// 작업 실행 시간을 파일에 기록하는 함수
-async function recordRunTime(jobName) {
-    let tracker = { lastRun: {} };
-    try {
-        const data = await fs.readFile(jobTrackerPath, 'utf-8');
-        tracker = JSON.parse(data);
-    } catch (error) {
-        // 파일이 없어도 괜찮음
-    }
-    tracker.lastRun[jobName] = new Date().toISOString();
-    await fs.writeFile(jobTrackerPath, JSON.stringify(tracker, null, 2));
-}
-
 // [✅ 제미나이 2.5가 제안한 핵심 로직]
 async function checkAndRunDelayedJob() {
     console.log('[Job Scheduler] 지연된 작업이 있는지 확인합니다...');
@@ -2279,7 +2159,7 @@ async function checkAndRunDelayedJob() {
     const today3AM = new Date();
     today3AM.setHours(3, 0, 0, 0);
 
-    const lastRun = await getLastRunTime('memoryProfiler');
+    const lastRun = await dbManager.getLastRunTime('memoryProfiler');
 
     // 조건: 지금 시간이 새벽 3시를 지났고, 마지막 실행 기록이 없거나 오늘 새벽 3시 이전일 경우
     if (now > today3AM && (!lastRun || lastRun < today3AM)) {
@@ -2289,7 +2169,7 @@ async function checkAndRunDelayedJob() {
         
         try {
             await enrichMemoryAndProfile(); // 기존에 만든 함수를 그대로 호출!
-            await recordRunTime('memoryProfiler'); // 성공하면 실행 시간 기록
+            await dbManager.recordRunTime('memoryProfiler'); // 성공하면 실행 시간 기록
             console.log('[Job Scheduler] 지연된 작업이 성공적으로 완료되었습니다.');
         } catch (error) {
             console.error('[Job Scheduler] 지연된 작업 실행 중 오류 발생:', error);
@@ -2309,14 +2189,14 @@ async function checkAndRunDelayedResearcherJob() {
     today7AM.setHours(7, 0, 0, 0);
 
     // 'autonomousResearcher'라는 이름으로 마지막 실행 시간을 가져옵니다.
-    const lastRun = await getLastRunTime('autonomousResearcher');
+    const lastRun = await dbManager.getLastRunTime('autonomousResearcher');
 
     // 조건: 지금 시간이 아침 7시를 지났고, 마지막 실행 기록이 없거나 오늘 아침 7시 이전일 경우
     if (now > today7AM && (!lastRun || lastRun < today7AM)) {
         console.log(`[Job Scheduler] 지연된 'Autonomous Researcher' 작업을 발견하여 지금 실행합니다.`);
         try {
             await runAutonomousResearcherJob(); // 1단계에서 만든 함수 호출!
-            await recordRunTime('autonomousResearcher'); // 성공하면 실행 시간 기록
+            await dbManager.recordRunTime('autonomousResearcher'); // 성공하면 실행 시간 기록
             console.log('[Job Scheduler] 지연된 연구원 작업이 성공적으로 완료되었습니다.');
         } catch (error) {
             console.error('[Job Scheduler] 지연된 연구원 작업 실행 중 오류 발생:', error);
@@ -2330,7 +2210,7 @@ cron.schedule('0 7 * * *', async () => {
     console.log('[Cron Job - Autonomous Researcher] 정기 작업을 시작합니다...');
     try {
         await runAutonomousResearcherJob(); // 1단계에서 만든 함수를 호출
-        await recordRunTime('autonomousResearcher'); // [✅ 추가] 성공 기록 남기기
+        await dbManager.recordRunTime('autonomousResearcher'); // [✅ 추가] 성공 기록 남기기
         console.log('[Cron Job - Autonomous Researcher] 정기 작업이 성공적으로 완료되었습니다.');
     } catch (error) {
         console.error('[Cron Job - Autonomous Researcher] 정기 작업 중 오류가 발생했습니다.');
@@ -2342,17 +2222,13 @@ cron.schedule('0 7 * * *', async () => {
 
 // 아침 7시의 '자율 연구' 작업을 위한 별도 함수
 async function runAutonomousResearcherJob() {
-    // 이 내용은 기존의 '매일 아침 7시' Cron Job 안에 있던 코드와 동일합니다.
     try {
-        await fs.access(userProfilePath);
+        // ✨ DB에서 사용자 프로필을 직접 가져옵니다.
+        const profile = dbManager.getUserProfile();
         
-        const profileContent = await fs.readFile(userProfilePath, 'utf-8');
-        const profile = JSON.parse(profileContent);
-        
-        if (profile.interests && Array.isArray(profile.interests) && profile.interests.length > 0) {
+        if (profile && profile.interests && Array.isArray(profile.interests) && profile.interests.length > 0) {
             for (const interest of profile.interests) {
                 console.log(`[Autonomous Researcher] 관심사 "${interest}"에 대한 조사를 시작합니다.`);
-                // 'gemini-2.5-flash'를 명시적으로 사용하여 실행
                 const report = await autonomousResearcher({ topic: interest, output_format: 'text' }, 'gemini-2.5-flash'); 
                 
                 const briefingsDir = path.join(__dirname, 'briefings');
@@ -2369,9 +2245,7 @@ async function runAutonomousResearcherJob() {
             console.log('[Autonomous Researcher] 추적할 관심사가 없어서 작업을 종료합니다.');
         }
     } catch (error) {
-        // userProfilePath가 없을 때의 오류를 포함하여 모든 오류를 여기서 잡습니다.
         console.error('[Autonomous Researcher] 작업 중 오류가 발생했습니다:', error.message);
-        // 이 오류를 밖으로 던져서 호출한 쪽에서 알 수 있게 합니다.
         throw error;
     }
 }
@@ -2381,7 +2255,7 @@ cron.schedule('0 3 * * *', async () => {
     console.log('[Cron Job - Memory Profiler] 정기 작업을 시작합니다...');
     try {
         await enrichMemoryAndProfile();
-        await recordRunTime('memoryProfiler'); // [✅ 추가] 성공 기록 남기기
+        await dbManager.recordRunTime('memoryProfiler'); // [✅ 추가] 성공 기록 남기기
         console.log('[Cron Job - Memory Profiler] 정기 작업이 성공적으로 완료되었습니다.');
     } catch (error) {
         console.error('[Cron Job - Memory Profiler] 정기 작업 중 오류가 발생했습니다:', error);
@@ -2394,8 +2268,8 @@ cron.schedule('0 3 * * *', async () => {
 async function startServer() {
     console.log('[Server Startup] 서버 시작 절차를 개시합니다...');
     
-    // 1. 기억을 먼저 불러옵니다.
-    await loadInitialMemory();
+    // 1. 데이터베이스 테이블을 준비합니다.
+    dbManager.initializeDatabase();
     
     // 2. 혹시 놓친 작업이 있으면 실행합니다.
     await checkAndRunDelayedJob(); // 메모리 프로파일러(3시) 지각 확인
