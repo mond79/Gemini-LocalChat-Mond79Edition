@@ -1418,7 +1418,7 @@ async function enrichMemoryAndProfile() {
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
-    // ✨ 1. DB에서 모든 기억을 불러옵니다.
+    // 1. DB에서 모든 기억을 불러옵니다.
     const allMemories = dbManager.getAllMemories();
     if (allMemories.length === 0) {
         console.log('[Memory Profiler] 분석할 대화 기록이 없습니다.');
@@ -1428,14 +1428,9 @@ async function enrichMemoryAndProfile() {
     const today = new Date();
     const yesterday = new Date(today);
     yesterday.setDate(today.getDate() - 1);
+    const yesterdayDateString = yesterday.toISOString().split('T')[0];
 
-    const yesterdayStart = yesterday.setHours(0, 0, 0, 0);
-    const yesterdayEnd = yesterday.setHours(23, 59, 59, 999);
-
-    const yesterdayMemories = allMemories.filter(mem => {
-        const memDate = new Date(mem.timestamp);
-        return memDate.getTime() >= yesterdayStart && memDate.getTime() <= yesterdayEnd;
-    });
+    const yesterdayMemories = allMemories.filter(mem => mem.timestamp.startsWith(yesterdayDateString));
 
     if (yesterdayMemories.length === 0) {
         console.log('[Memory Profiler] 어제 분석할 대화 기록이 없습니다.');
@@ -1443,18 +1438,18 @@ async function enrichMemoryAndProfile() {
     }
     console.log(`[Memory Profiler] 어제의 대화 기록 ${yesterdayMemories.length}개를 분석합니다...`);
 
-    // ✨ 2. DB에서 사용자 프로필을 불러옵니다.
+    // 2. DB에서 사용자 프로필을 불러옵니다.
     const userProfile = dbManager.getUserProfile();
 
     const profilerPrompt = `
         You are a highly intelligent profiler AI. Your task is to analyze the [User Profile] and a list of [Conversation Summaries] from yesterday.
         Based on this analysis, you must perform two tasks:
 
-        1.  **Enrich Memories:** For each conversation summary, add relevant metadata like "keywords" (array of strings, in Korean) and "sentiment" (string: "positive", "negative", "neutral"). This should be added to the original memory object.
+        1.  **Enrich Memories:** For each conversation summary, add relevant metadata like "keywords" (an array of strings in Korean) and "sentiment" (a string: "positive", "negative", or "neutral"). You MUST preserve the original "id", "summary", "chat_id", and "timestamp".
         2.  **Update Profile:** Identify ONE SINGLE new piece of information about the user (a new interest, a new goal, a new preference) that is not already in their profile.
 
         Your final output MUST be a single, valid JSON object with two keys: "enriched_memories" and "profile_update".
-        - "enriched_memories" should be an array of the updated memory objects. The original timestamp and all original data must be preserved.
+        - "enriched_memories" should be an array of the fully updated memory objects, including the new metadata.
         - "profile_update" should be an object with an "action" and "params", or {"action": "none"}.
 
         **[User Profile]:**
@@ -1466,44 +1461,56 @@ async function enrichMemoryAndProfile() {
         Now, generate the final JSON output. Do not include markdown like \`\`\`json.
     `;
 
-    const result = await model.generateContent(profilerPrompt);
-    let cleanJsonString = result.response.text().trim();
-    // 가끔 AI가 JSON 코드 블록 마크다운을 포함하는 경우가 있어 제거합니다.
-    if (cleanJsonString.startsWith('```json')) {
-        cleanJsonString = cleanJsonString.slice(7, -3).trim();
-    }
-    const analysisResult = JSON.parse(cleanJsonString);
-
-    // ✨ 3. 분석 결과를 DB에 다시 반영합니다.
-
-    // 3-1. long_term_memory 테이블 업데이트 (이 부분은 조금 더 정교한 DB 작업이 필요하지만, 우선은 전체를 다시 쓰는 방식으로 간단하게 구현합니다.)
-    if (analysisResult.enriched_memories) {
-        // 실제 운영 환경에서는 UPDATE 구문을 사용하는 것이 더 효율적입니다.
-        // 여기서는 개념 증명을 위해 간단히 구현합니다.
-        console.log(`[Memory Profiler] ${analysisResult.enriched_memories.length}개의 기억에 메타데이터를 추가/업데이트합니다. (DB 업데이트 로직은 추후 고도화 필요)`);
-    }
-
-    // 3-2. user_profile 테이블 업데이트
-    if (analysisResult.profile_update && analysisResult.profile_update.action !== 'none') {
-        const update = analysisResult.profile_update;
-        console.log(`[Memory Profiler] 새로운 프로필 업데이트 제안을 발견했습니다:`, update);
-
-        const currentUserProfile = dbManager.getUserProfile();
-
-        if (update.action === 'addInterest' && update.params.topic) {
-            const newInterest = update.params.topic;
-            if (!currentUserProfile.interests.includes(newInterest)) {
-                currentUserProfile.interests.push(newInterest);
-                console.log(`[Profile Update] interests에 '${newInterest}'를 추가했습니다.`);
-            }
+    try {
+        const result = await model.generateContent(profilerPrompt);
+        let cleanJsonString = result.response.text().trim();
+        
+        const jsonMatch = cleanJsonString.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+            throw new Error("AI 응답에서 유효한 JSON을 찾을 수 없습니다.");
         }
-        // (AI가 제안할 다른 action들을 위해 여기에 else if를 추가할 수 있습니다.)
+        const analysisResult = JSON.parse(jsonMatch[0]);
 
-        dbManager.saveUserProfile(currentUserProfile);
-        console.log(`[Profile Update] user_profile DB 저장을 완료했습니다.`);
+        // --- 3. 분석 결과를 DB에 다시 반영합니다. ---
 
-    } else {
-        console.log('[Memory Profiler] 프로필을 업데이트할 새로운 정보를 찾지 못했습니다.');
+        // 3-1. long_term_memory 테이블 업데이트 (고도화 완료!)
+        if (analysisResult.enriched_memories && Array.isArray(analysisResult.enriched_memories)) {
+            let updatedCount = 0;
+            for (const enrichedMem of analysisResult.enriched_memories) {
+                if (enrichedMem.id && enrichedMem.keywords) {
+                    dbManager.updateMemoryMetadata(enrichedMem.id, enrichedMem.keywords, enrichedMem.sentiment);
+                    updatedCount++;
+                }
+            }
+            console.log(`[Memory Profiler] ${updatedCount}개의 기억에 메타데이터를 성공적으로 업데이트했습니다.`);
+        }
+
+        // 3-2. user_profile 테이블 업데이트
+        if (analysisResult.profile_update && analysisResult.profile_update.action !== 'none') {
+            const update = analysisResult.profile_update;
+            console.log(`[Memory Profiler] 새로운 프로필 업데이트 제안을 발견했습니다:`, update);
+
+            const currentUserProfile = dbManager.getUserProfile();
+
+            // AI가 'addInterest' 또는 'add_interest' 등 다양한 형식을 사용할 수 있으므로 유연하게 처리
+            if ((update.action === 'addInterest' || update.action === 'add_interest') && (update.params.topic || update.params.interest)) {
+                const newInterest = update.params.topic || update.params.interest;
+                if (!currentUserProfile.interests.includes(newInterest)) {
+                    currentUserProfile.interests.push(newInterest);
+                    console.log(`[Profile Update] interests에 '${newInterest}'를 추가했습니다.`);
+                }
+            }
+            // (향후 AI가 제안할 다른 action들을 위해 여기에 else if를 추가할 수 있습니다.)
+
+            dbManager.saveUserProfile(currentUserProfile);
+            console.log(`[Profile Update] user_profile DB 저장을 완료했습니다.`);
+
+        } else {
+            console.log('[Memory Profiler] 프로필을 업데이트할 새로운 정보를 찾지 못했습니다.');
+        }
+
+    } catch (error) {
+        console.error('[Memory Profiler] AI 호출 또는 JSON 파싱 중 오류 발생:', error);
     }
 }
 // --- 4. 도구 목록(tools 객체) 생성 ---

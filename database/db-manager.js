@@ -191,7 +191,8 @@ module.exports = {
     saveLongTermMemory,
     getLastRunTime,
     recordRunTime,
-    saveAiReflection
+    saveAiReflection,
+    updateMemoryMetadata
 };
 
 // AI의 자기 성찰 결과를 DB에 저장하는 함수
@@ -206,6 +207,24 @@ function saveAiReflection(entryDate, learned, improvements) {
         return true;
     } catch (error) {
         console.error('[DB Manager] AI 성찰 기록 저장 중 오류:', error.message);
+        return false;
+    }
+}
+
+// 기억의 메타데이터(키워드, 감정)를 업데이트하는 함수
+function updateMemoryMetadata(memoryId, keywords, sentiment) {
+    try {
+        const stmt = db.prepare(`
+            UPDATE long_term_memory 
+            SET keywords = ?, sentiment = ? 
+            WHERE id = ?
+        `);
+        const result = stmt.run(JSON.stringify(keywords || []), sentiment, memoryId);
+        
+        // result.changes > 0 이면 업데이트 성공
+        return result.changes > 0;
+    } catch (error) {
+        console.error('[DB Manager] 기억 메타데이터 업데이트 중 오류:', error.message);
         return false;
     }
 }
