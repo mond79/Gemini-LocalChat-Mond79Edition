@@ -4,6 +4,7 @@ import { saveData } from '../../utils/storage.js';
 import { ApiSettings } from '../modules/settings/ApiSettings.js';
 import { UsageReporter } from '../modules/settings/UsageReporter.js';
 import { GeneralSettings } from '../modules/settings/GeneralSettings.js';
+import { MemoryVisualizer } from '../modules/settings/MemoryVisualizer.js';
 
 let elements = {};
 let isInitialized = false;
@@ -33,6 +34,10 @@ function handleTabClick(e) {
     document.getElementById(targetTabId).classList.add('active');
     if (targetTabId === 'tab-usage') {
         UsageReporter.render();
+    }
+    // '데이터 관리' 탭(tab-data)이 클릭되면, MemoryVisualizer를 실행하도록 추가합니다.
+    else if (targetTabId === 'tab-data') {
+        MemoryVisualizer.render();
     }
 }
 
@@ -108,6 +113,14 @@ export const SettingsController = {
         }
         checkAndResetDailyUsage();
         startResetCountdown();
+
+        // 페이지가 처음 로드될 때 활성화된 탭을 확인하고,
+        // 만약 '데이터 관리' 탭이라면 차트를 바로 그리도록 합니다.
+        const activeTab = document.querySelector('#settings-tabs-list .tab-btn.active')?.dataset.tab;
+        if (activeTab === 'tab-data') {
+            MemoryVisualizer.render();
+        }
+
         isInitialized = true;
         console.log('SettingsController Initialized.');
     },
@@ -118,6 +131,10 @@ export const SettingsController = {
         const activeTab = document.querySelector('#settings-tabs-list .tab-btn.active')?.dataset.tab;
         if (activeTab === 'tab-usage') {
             UsageReporter.render();
+        }
+        // 'render' 함수가 호출될 때도 데이터 탭이 활성화 상태이면 차트를 다시 그리도록 추가합니다.
+        else if (activeTab === 'tab-data') {
+            MemoryVisualizer.render();
         }
     }
 };

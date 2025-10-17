@@ -201,6 +201,7 @@
                         </div>
                         <div id="tab-data" class="tab-content">
                            <div class="settings-section"><div class="settings-group settings-group--default"><label for="history-token-limit">대화 기록 토큰 제한</label><input type="number" id="history-token-limit" min="0" value="0"></div><p class="settings-group__description">API 요청 시 포함할 최대 토큰 수를 설정합니다. 0은 무제한입니다.</p></div>
+                            <div class="settings-section"><h2 class="section-title">🧠 AI 기억 분포도</h2><p class="section-description">AI의 장기 기억이 어떤 주제들로 구성되어 있는지 보여줍니다. 매일 자정에 자동으로 업데이트됩니다.</p><div class="chart-container" style="height: 300px; position: relative; margin-top: 15px;"><canvas id="memory-chart"></canvas></div></div>
                            <div class="settings-section danger-zone"><h2>위험 구역</h2><div class="danger-item"><div><p class="danger-title">모든 세션 초기화</p><p class="danger-description">모든 폴더와 대화 기록이 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다.</p></div><button id="reset-sessions-btn" class="danger-btn">초기화 실행</button></div><div class="danger-item"><div><p class="danger-title">모든 API 사용기록 초기화</p><p class="danger-description">그래프와 상세 기록을 포함한 모든 누적 API 사용 데이터가 영구적으로 삭제됩니다.</p></div><button id="clear-usage-history-btn" class="danger-btn">초기화 실행</button></div></div>
                         </div>
                         <div id="tab-usage" class="tab-content">

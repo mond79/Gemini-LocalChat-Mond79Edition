@@ -21,6 +21,7 @@ const { formatISO, addDays, startOfDay, endOfDay } = require('date-fns');
 const cron = require('node-cron');
 const os = require('os');
 const dbManager = require('./database/db-manager');
+const vectorDBManager = require('./database/vector-db-manager');
 
 // --- 2. 전역 변수 및 상수 설정 ---
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -898,14 +899,29 @@ async function saveMemory(conversationHistory, chatId, genAI, mainModelName) {
         }
     }
     
-    // ✨ DB에 저장하는 로직
+    // --- 2. 동기화된 DB 저장 
     const newMemory = { 
         timestamp: new Date().toISOString(), 
         summary: summaryText, 
         chatId: chatId 
     };
-    dbManager.saveLongTermMemory(newMemory);
-    console.log('[DB 저장] 새로운 기억을 데이터베이스에 성공적으로 저장했습니다.');
+
+    try {
+        // 2-1. 먼저 SQLite에 텍스트 기억을 기록하고, 생성된 고유 ID를 받아옵니다.
+        const memoryId = dbManager.saveLongTermMemory(newMemory);
+        if (!memoryId) {
+            throw new Error("SQLite에 기억 저장 후 유효한 ID를 받지 못했습니다.");
+        }
+
+        // 2-2. 받은 ID와 텍스트로 Python 서버에 벡터 저장을 요청합니다.
+        await vectorDBManager.addMemory(memoryId, summaryText);
+        
+        console.log(`[DB 동기화 저장] Memory ID ${memoryId}를 SQLite와 VectorDB에 모두 성공적으로 저장했습니다.`);
+
+    } catch (error) {
+        console.error(`[DB 동기화 저장 실패!] 기억을 저장하는 동안 오류가 발생했습니다:`, error.message);
+        // (향후 여기에 실패한 작업을 재시도하는 로직을 추가할 수 있습니다)
+    }
 }
 // 좀 더 업그레이드 한 PPTX 프레젠테이션 파일 생성
 async function createPresentation({ jsonString, title }) {
@@ -1597,6 +1613,26 @@ app.post('/api/validate', async (req, res) => {
 // =================================================================
 app.post('/api/chat', async (req, res) => {
     let { model: modelName, history, chatId, historyTokenLimit, systemPrompt, temperature, topP, task } = req.body;
+
+    // ✨ 강제 동기화 '비밀 명령어'
+    const lastUserMessage = history.slice(-1)[0]?.parts[0]?.text;
+    if (lastUserMessage === "/sync-vectordb") {
+        console.log('[Admin Command] VectorDB 강제 동기화를 시작합니다...');
+        try {
+            // 1. SQLite에서 모든 텍스트 기억 가져오기 (ID와 요약문만)
+            const allMemories = dbManager.getAllMemories();
+            const memoriesForVectorDB = allMemories.map(m => ({ id: m.id, text: m.summary }));
+
+            // 2. Python 서버에 보내서 VectorDB 재구축 요청 (시간이 걸릴 수 있음)
+            await vectorDBManager.rebuildVectorDB(memoriesForVectorDB);
+
+            const reply = { type: 'text', text: `✅ VectorDB 강제 동기화가 완료되었습니다. 총 ${allMemories.length}개의 기억이 처리되었습니다.` };
+            return res.json({ reply: reply, chatId: chatId, usage: { totalTokenCount: 0 } });
+        } catch (error) {
+            const reply = { type: 'text', text: `❌ 동기화 중 오류 발생: ${error.message}` };
+            return res.status(500).json({ message: `동기화 중 오류 발생: ${error.message}` });
+        }
+    }
     
     console.log(`[API] Chat request - Model: ${modelName}, ChatID: ${chatId || 'New Chat'}`);
 
@@ -2301,39 +2337,43 @@ cron.schedule('0 3 * * *', async () => {
 
 // ✨ 9차 진화: '기억의 정원사' 핵심 로직
 async function runMemoryGardenerProcess() {
+    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    let yesterdayMemories = []; // 함수 전체에서 사용할 수 있도록 밖으로 뺍니다.
+
     // --- 1. 자기 성찰 (Reflective AI) ---
     console.log('[Memory Gardener] STEP 1: 어제의 대화를 바탕으로 자기 성찰을 시작합니다.');
 
-    // 어제 날짜의 모든 기억을 DB에서 가져옴
     const allMemories = dbManager.getAllMemories();
     const today = new Date();
     const yesterday = new Date(today);
     yesterday.setDate(today.getDate() - 1);
-    
-    // 타임존 문제 방지를 위해 날짜 문자열(YYYY-MM-DD)로 비교
     const yesterdayDateString = yesterday.toISOString().split('T')[0];
 
-    const yesterdayMemories = allMemories.filter(mem => {
-        // DB에서 가져온 timestamp (ISO 문자열)를 날짜 문자열로 변환하여 비교
-        return mem.timestamp.startsWith(yesterdayDateString);
-    });
+    yesterdayMemories = allMemories.filter(mem => mem.timestamp.startsWith(yesterdayDateString));
+
+    let learned_text = "어제는 대화가 없었습니다.";
+    let improvements_text = "오늘은 사용자와 더 많은 대화를 나눌 수 있기를 바랍니다.";
+    let insight_text = "어제는 활동이 없어 분석할 데이터가 부족합니다.";
 
     if (yesterdayMemories.length === 0) {
-        console.log('[Memory Gardener] 어제는 대화 기록이 없었으므로 성찰을 건너뜁니다.');
+        console.log('[Memory Gardener] 어제는 대화 기록이 없었으므로, 기본 메시지를 기록합니다.');
     } else {
         const memoriesText = yesterdayMemories.map(m => `- ${m.summary}`).join('\n');
         
         const reflectionPrompt = `
             당신은 어제의 대화 기록을 분석하여 스스로 성장하는 AI입니다.
-            아래의 [어제 대화 요약]을 바탕으로, 다음 두 가지 질문에 대해 각각 한 문장으로 간결하게 답변해주세요.
+            아래의 [어제 대화 요약]을 바탕으로, 다음 세 가지 질문에 대해 각각 한 문장으로 간결하게 답변해주세요.
 
-            1. 어제 사용자와의 대화를 통해 새롭게 배운 가장 중요한 사실이나 정보는 무엇입니까?
-            2. 내일 사용자와 더 나은 대화를 하기 위해 개선해야 할 점이 있다면 무엇입니까?
+            1.  **learned**: 어제 사용자와의 대화를 통해 새롭게 배운 가장 중요한 사실이나 정보는 무엇입니까?
+            2.  **improvements**: 내일 사용자와 더 나은 대화를 하기 위해 개선해야 할 점이 있다면 무엇입니까?
+            3.  **insight**: 어제의 대화 주제 분포나 나의 답변 경향을 분석했을 때, 나 자신에 대해 내릴 수 있는 결론(인사이트)은 무엇입니까? (예: "어제는 기술 관련 주제에 평소보다 더 깊이 몰입했으며, 사용자에게 긍정적인 피드백을 많이 제공했다.")
 
             **응답 형식 (반드시 이 JSON 형식을 지켜주세요. 다른 설명은 절대 추가하지 마세요):**
             {
                 "learned": "어제 배운 점에 대한 한 문장 요약입니다.",
-                "improvements": "개선할 점에 대한 한 문장 요약입니다."
+                "improvements": "개선할 점에 대한 한 문장 요약입니다.",
+                "insight": "나 자신에 대한 한 문장짜리 인사이트입니다."
             }
 
             [어제 대화 요약]:
@@ -2341,12 +2381,7 @@ async function runMemoryGardenerProcess() {
         `;
 
         try {
-            const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-            // 비용 효율적인 Flash 모델 사용
-            const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
             const result = await model.generateContent(reflectionPrompt);
-            
-            // AI가 생성한 텍스트에서 JSON 부분만 정확히 추출
             const responseText = result.response.text();
             const jsonMatch = responseText.match(/\{[\s\S]*\}/);
             if (!jsonMatch) {
@@ -2354,23 +2389,104 @@ async function runMemoryGardenerProcess() {
             }
             const reflectionJSON = JSON.parse(jsonMatch[0]);
 
-            // ✨ 성찰 결과를 DB에 저장하는 함수 (이 함수는 다음 단계에서 db-manager.js에 만들 것입니다.)
-            dbManager.saveAiReflection(yesterdayDateString, reflectionJSON.learned, reflectionJSON.improvements);
-            
-            console.log(`[Memory Gardener] 자기 성찰 완료:`);
-            console.log(`  - 어제 배운 점: ${reflectionJSON.learned}`);
-            console.log(`  - 개선할 점: ${reflectionJSON.improvements}`);
+            // AI가 생성한 텍스트로 변수 값을 업데이트
+            learned_text = reflectionJSON.learned;
+            improvements_text = reflectionJSON.improvements;
+            insight_text = reflectionJSON.insight;
+
+            console.log(`[Memory Gardener] 자기 성찰 및 인사이트 생성 완료:`);
+            console.log(`  - 어제 배운 점: ${learned_text}`);
+            console.log(`  - 개선할 점: ${improvements_text}`);
+            console.log(`  - 자기 인사이트: ${insight_text}`);
 
         } catch (error) {
             console.error('[Memory Gardener] 자기 성찰 중 AI 호출 또는 JSON 파싱 오류:', error);
+            // 오류가 발생해도 기본 텍스트를 사용해 계속 진행
         }
     }
+    
+    // ✨ 최종적으로 성찰, 개선점, 인사이트를 DB에 저장합니다.
+    dbManager.saveAiReflection(yesterdayDateString, learned_text, improvements_text, insight_text);
 
-    // --- (향후) 2. 의미 클러스터링 ---
-    console.log('[Memory Gardener] STEP 2: (향후 구현 예정) 의미 클러스터링을 시작합니다.');
+    // --- 2. 의미 클러스터링 ---
+    console.log('[Memory Gardener] STEP 2: 모든 기억의 의미 클러스터링을 시작합니다.');
+    
+    if (allMemories.length < 10) { // 최소 10개 이상의 기억이 있을 때만 실행
+        console.log(`[Memory Gardener] 기억이 ${allMemories.length}개 뿐이므로, 클러스터링을 건너뜁니다.`);
+        return;
+    }
 
-    // --- (향후) 3. 기억 압축 ---
-    console.log('[Memory Gardener] STEP 3: (향후 구현 예정) 기억 압축을 시작합니다.');
+    try {
+        // (1) LanceDB에서 모든 벡터를 가져옵니다. (이 기능은 vector-db-manager.js에 새로 만들어야 합니다)
+        const allVectors = await vectorDBManager.getAllVectors();
+        if (allVectors.length !== allMemories.length) {
+            throw new Error("DB의 기억 수와 VectorDB의 벡터 수가 일치하지 않습니다.");
+        }
+
+        // (2) '의미 엔진' 서버에 클러스터링을 요청합니다.
+        const CLUSTER_COUNT = 5; // 우선 5개 그룹으로 나눠보겠습니다.
+        console.log(`[Memory Gardener] ${allVectors.length}개의 벡터를 ${CLUSTER_COUNT}개의 그룹으로 클러스터링 요청...`);
+        const clusterResponse = await axios.post('http://localhost:8001/cluster', {
+            vectors: allVectors,
+            num_clusters: CLUSTER_COUNT
+        });
+        const labels = clusterResponse.data.labels; // 결과: [0, 1, 0, 2, 4, 1, ...]
+
+        // (3) 각 클러스터의 주제를 AI에게 물어봐서 이름을 붙여줍니다. (✨ 이 부분이 수정됩니다)
+        for (let i = 0; i < CLUSTER_COUNT; i++) {
+            const clusterMemories = allMemories.filter((mem, index) => labels[index] === i);
+            if (clusterMemories.length === 0) continue;
+
+            const summariesForNaming = clusterMemories.map(m => `- ${m.summary}`).join('\n');
+            const namingPrompt = `
+                다음은 의미적으로 유사한 대화 요약들의 묶음입니다.
+                이 묶음의 핵심 주제를 가장 잘 나타내는 간결한 이름(2~5단어)을 하나만 한국어로 제안해주세요.
+                다른 설명 없이, 이름만 정확히 답변해주세요.
+
+                [대화 요약 묶음]:
+                ${summariesForNaming}
+            `;
+            
+            let clusterName = `클러스터 ${i} (이름 생성 실패)`; // 기본 이름
+            try {
+                // 1차 시도: Flash 모델
+                const flashModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+                const nameResultFlash = await flashModel.generateContent(namingPrompt);
+                clusterName = nameResultFlash.response.text().trim().replace(/"/g, '');
+            } catch (flashError) {
+                console.warn(`[Memory Gardener] 클러스터 이름 생성 실패 (Flash 모델): ${flashError.message}`);
+                console.log('[Memory Gardener] Pro 모델로 재시도합니다...');
+                try {
+                    // 2차 시도: Pro 모델
+                    const proModel = genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
+                    const nameResultPro = await proModel.generateContent(namingPrompt);
+                    clusterName = nameResultPro.response.text().trim().replace(/"/g, '');
+                } catch (proError) {
+                    console.error(`[Memory Gardener] 클러스터 이름 생성 최종 실패 (Pro 모델): ${proError.message}`);
+                }
+            }
+            
+            console.log(`[Memory Gardener] 클러스터 ${i}의 이름: "${clusterName}"`);
+            
+            // (4) 결과를 DB에 저장합니다.
+            dbManager.saveMemoryCluster(i, clusterName, []);
+        }
+        
+        // (5) 각 기억이 몇 번 클러스터에 속하는지 long_term_memory 테이블에 업데이트합니다.
+        const memoryUpdates = allMemories.map((memory, index) => {
+            return {
+                id: memory.id,
+                cluster_id: labels[index] // labels 배열에서 해당 기억의 클러스터 ID를 가져옴
+            };
+        });
+        
+        // dbManager를 통해 DB에 일괄 업데이트 요청!
+        dbManager.batchUpdateMemoryClusterIds(memoryUpdates);
+
+
+    } catch (error) {
+        console.error('[Memory Gardener] 의미 클러스터링 중 오류 발생:', error.message);
+    }
 }
 
 // 매일 자정(0시 0분)에 '기억의 정원사' 프로세스 실행
@@ -2387,6 +2503,22 @@ cron.schedule('0 0 * * *', async () => {
 }, {
     scheduled: true,
     timezone: "Asia/Seoul"
+});
+
+// (시각화): 기억 통계 데이터를 제공하는 API 엔드포인트
+app.get('/api/memory-stats', (req, res) => {
+    try {
+        const stats = dbManager.getMemoryClusterStats();
+        // 프론트엔드가 사용하기 좋은 형식 { labels: [...], data: [...] } 으로 가공
+        const chartData = {
+            labels: stats.map(s => s.cluster_name),
+            data: stats.map(s => s.memory_count)
+        };
+        res.json(chartData);
+    } catch (error) {
+        console.error('[API /memory-stats] 오류:', error);
+        res.status(500).json({ message: '기억 통계를 가져오는 중 오류가 발생했습니다.' });
+    }
 });
 
 // --- 7. 서버 실행 (가장 마지막에!) ---
@@ -2422,6 +2554,10 @@ async function startServer() {
         });
     }
 }
+
+
+// ✨✨✨ 테스트를 위해 이 부분을 임시로 추가! ✨✨✨
+runMemoryGardenerProcess();
 
 // [✅ 최종 수정] 서버 시작 함수를 호출합니다.
 startServer();
