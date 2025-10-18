@@ -2338,29 +2338,24 @@ cron.schedule('0 3 * * *', async () => {
 // ✨ 9차 진화: '기억의 정원사' 핵심 로직
 async function runMemoryGardenerProcess() {
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    let yesterdayMemories = []; // 함수 전체에서 사용할 수 있도록 밖으로 뺍니다.
+    
+    const allMemories = dbManager.getAllMemories();
 
     // --- 1. 자기 성찰 (Reflective AI) ---
     console.log('[Memory Gardener] STEP 1: 어제의 대화를 바탕으로 자기 성찰을 시작합니다.');
-
-    const allMemories = dbManager.getAllMemories();
     const today = new Date();
     const yesterday = new Date(today);
     yesterday.setDate(today.getDate() - 1);
     const yesterdayDateString = yesterday.toISOString().split('T')[0];
-
-    yesterdayMemories = allMemories.filter(mem => mem.timestamp.startsWith(yesterdayDateString));
+    const yesterdayMemories = allMemories.filter(mem => mem.timestamp.startsWith(yesterdayDateString));
 
     let learned_text = "어제는 대화가 없었습니다.";
     let improvements_text = "오늘은 사용자와 더 많은 대화를 나눌 수 있기를 바랍니다.";
     let insight_text = "어제는 활동이 없어 분석할 데이터가 부족합니다.";
 
-    if (yesterdayMemories.length === 0) {
-        console.log('[Memory Gardener] 어제는 대화 기록이 없었으므로, 기본 메시지를 기록합니다.');
-    } else {
+    if (yesterdayMemories.length > 0) {
         const memoriesText = yesterdayMemories.map(m => `- ${m.summary}`).join('\n');
-        
+
         const reflectionPrompt = `
             당신은 어제의 대화 기록을 분석하여 스스로 성장하는 AI입니다.
             아래의 [어제 대화 요약]을 바탕으로, 다음 세 가지 질문에 대해 각각 한 문장으로 간결하게 답변해주세요.
@@ -2410,29 +2405,18 @@ async function runMemoryGardenerProcess() {
 
     // --- 2. 의미 클러스터링 ---
     console.log('[Memory Gardener] STEP 2: 모든 기억의 의미 클러스터링을 시작합니다.');
-    
-    if (allMemories.length < 10) { // 최소 10개 이상의 기억이 있을 때만 실행
+    if (allMemories.length < 10) {
         console.log(`[Memory Gardener] 기억이 ${allMemories.length}개 뿐이므로, 클러스터링을 건너뜁니다.`);
-        return;
-    }
+    } else {
+        try {
+            const allVectors = await vectorDBManager.getAllVectors();
+            if (allVectors.length !== allMemories.length) throw new Error("DB 기억 수와 VectorDB 벡터 수가 일치하지 않습니다.");
+            
+            const CLUSTER_COUNT = 5;
+            const clusterResponse = await axios.post('http://localhost:8001/cluster', { vectors: allVectors, num_clusters: CLUSTER_COUNT });
+            const labels = clusterResponse.data.labels;
 
-    try {
-        // (1) LanceDB에서 모든 벡터를 가져옵니다. (이 기능은 vector-db-manager.js에 새로 만들어야 합니다)
-        const allVectors = await vectorDBManager.getAllVectors();
-        if (allVectors.length !== allMemories.length) {
-            throw new Error("DB의 기억 수와 VectorDB의 벡터 수가 일치하지 않습니다.");
-        }
-
-        // (2) '의미 엔진' 서버에 클러스터링을 요청합니다.
-        const CLUSTER_COUNT = 5; // 우선 5개 그룹으로 나눠보겠습니다.
-        console.log(`[Memory Gardener] ${allVectors.length}개의 벡터를 ${CLUSTER_COUNT}개의 그룹으로 클러스터링 요청...`);
-        const clusterResponse = await axios.post('http://localhost:8001/cluster', {
-            vectors: allVectors,
-            num_clusters: CLUSTER_COUNT
-        });
-        const labels = clusterResponse.data.labels; // 결과: [0, 1, 0, 2, 4, 1, ...]
-
-        // (3) 각 클러스터의 주제를 AI에게 물어봐서 이름을 붙여줍니다. (✨ 이 부분이 수정됩니다)
+            // (3) 각 클러스터의 주제를 AI에게 물어봐서 이름을 붙여줍니다. (✨ 이 부분이 수정됩니다)
         for (let i = 0; i < CLUSTER_COUNT; i++) {
             const clusterMemories = allMemories.filter((mem, index) => labels[index] === i);
             if (clusterMemories.length === 0) continue;
@@ -2473,21 +2457,46 @@ async function runMemoryGardenerProcess() {
         }
         
         // (5) 각 기억이 몇 번 클러스터에 속하는지 long_term_memory 테이블에 업데이트합니다.
-        const memoryUpdates = allMemories.map((memory, index) => {
-            return {
-                id: memory.id,
-                cluster_id: labels[index] // labels 배열에서 해당 기억의 클러스터 ID를 가져옴
-            };
-        });
-        
-        // dbManager를 통해 DB에 일괄 업데이트 요청!
-        dbManager.batchUpdateMemoryClusterIds(memoryUpdates);
-
-
-    } catch (error) {
-        console.error('[Memory Gardener] 의미 클러스터링 중 오류 발생:', error.message);
+            const memoryUpdates = allMemories.map((mem, i) => ({ id: mem.id, cluster_id: labels[i] }));
+            dbManager.batchUpdateMemoryClusterIds(memoryUpdates);
+        } catch (error) {
+            console.error('[Memory Gardener] 의미 클러스터링 중 오류:', error.message);
+        }
     }
-}
+
+    // --- 3. 기억 압축 (Memory Compression) ---
+    console.log('[Memory Gardener] STEP 3: 오래된 기억 압축을 시작합니다.');
+    const CLUSTER_COMPRESSION_THRESHOLD = 20;
+    const allClusters = dbManager.getAllClusters();
+
+    for (const cluster of allClusters) {
+        const memoriesToCompress = dbManager.getUnarchivedMemoriesByCluster(cluster.id);
+        if (memoriesToCompress.length >= CLUSTER_COMPRESSION_THRESHOLD) {
+            console.log(`[Memory Gardener] '${cluster.cluster_name}' 주제 압축 시작...`);
+            const textToSummarize = memoriesToCompress.map(m => `- ${m.summary}`).join('\n');
+            const memoryIdsToArchive = memoriesToCompress.map(m => m.id);
+            const compressionPrompt = `
+                다음은 '${cluster.cluster_name}'라는 하나의 주제에 대한 여러 대화 요약 기록들입니다.
+                이 모든 내용을 관통하는 가장 핵심적인 정보, 결정 사항, 사용자의 성향 변화 등을
+                3~5개의 핵심 문장으로 최종 요약해주세요. 이 요약본은 미래에 이 주제를 빠르게 파악하기 위해 사용됩니다.
+
+                [요약할 기록들]:
+                ${textToSummarize}
+            `;
+            
+            try {
+                const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+                const result = await model.generateContent(compressionPrompt);
+                const compressedSummary = result.response.text();
+                dbManager.saveCompressedMemory(cluster.id, compressedSummary, memoryIdsToArchive);
+                dbManager.archiveMemories(memoryIdsToArchive);
+                console.log(`[Memory Gardener] '${cluster.cluster_name}' 주제 압축 완료!`);
+            } catch (error) {
+                console.error(`[Memory Gardener] '${cluster.cluster_name}' 주제 압축 중 오류:`, error.message);
+            }
+        }
+    }
+} // <--- 여기가 함수의 끝입니다.
 
 // 매일 자정(0시 0분)에 '기억의 정원사' 프로세스 실행
 cron.schedule('0 0 * * *', async () => {
@@ -2555,9 +2564,15 @@ async function startServer() {
     }
 }
 
-
-// ✨✨✨ 테스트를 위해 이 부분을 임시로 추가! ✨✨✨
-runMemoryGardenerProcess();
+// ✨✨✨ 테스트를 위해 Top-Level Await 문제를 해결하는 즉시 실행 함수로 감쌉니다. ✨✨✨
+(async () => {
+    // DB와 서버가 준비될 시간을 잠시 기다려줍니다. (안전장치)
+    await new Promise(resolve => setTimeout(resolve, 2000)); 
+    
+    console.log('[Manual Test] "기억의 정원사" 프로세스를 수동으로 실행합니다...');
+    await runMemoryGardenerProcess();
+    console.log('[Manual Test] 수동 실행이 완료되었습니다.');
+})();
 
 // [✅ 최종 수정] 서버 시작 함수를 호출합니다.
 startServer();

@@ -89,6 +89,28 @@ function initializeDatabase() {
         // 테이블이 아직 존재하지 않는 경우 등 오류는 무시
     }
 
+    // 기억 압축: 'is_archived' 컬럼이 없으면 추가
+    try {
+        const columns = db.pragma('table_info(long_term_memory)');
+        const hasArchivedColumn = columns.some(col => col.name === 'is_archived');
+        if (!hasArchivedColumn) {
+            db.exec('ALTER TABLE long_term_memory ADD COLUMN is_archived INTEGER DEFAULT 0');
+            console.log('[DB Manager] "long_term_memory" 테이블에 "is_archived" 컬럼을 추가했습니다.');
+        }
+    } catch (error) { /* 오류 무시 */ }
+
+    // 기억 압축: 압축된 기억을 저장할 새 테이블 생성
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS compressed_memories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cluster_id INTEGER,
+            summary_text TEXT NOT NULL,
+            source_memory_ids TEXT NOT NULL, -- JSON 배열 형태 [1, 2, 3]
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (cluster_id) REFERENCES memory_clusters(id)
+        );
+    `);
+
     console.log('[DB Manager] 테이블 초기화가 완료되었습니다.');
 }
 
@@ -267,19 +289,17 @@ function addClusterIdToMemoriesTable() {
 
 // 클러스터링: 여러 기억의 클러스터 ID를 한 번에 업데이트하는 함수
 function batchUpdateMemoryClusterIds(memoryUpdates) {
-    // memoryUpdates는 [{id: 1, cluster_id: 0}, {id: 2, cluster_id: 1}, ...] 형태의 배열
     if (!memoryUpdates || memoryUpdates.length === 0) return;
 
-    // '트랜잭션'을 사용하여 여러 업데이트를 하나의 작업으로 묶어 안전하고 빠르게 처리합니다.
-    const transaction = db.transaction((updates) => {
-        const stmt = db.prepare('UPDATE long_term_memory SET cluster_id = ? WHERE id = ?');
+    const stmt = db.prepare('UPDATE long_term_memory SET cluster_id = ? WHERE id = ?');
+    const updateMany = db.transaction((updates) => {
         for (const update of updates) {
             stmt.run(update.cluster_id, update.id);
         }
     });
 
     try {
-        transaction(memoryUpdates);
+        updateMany(memoryUpdates);
         console.log(`[DB Manager] ${memoryUpdates.length}개 기억의 클러스터 ID를 성공적으로 업데이트했습니다.`);
     } catch (error) {
         console.error('[DB Manager] 클러스터 ID 일괄 업데이트 중 오류:', error.message);
@@ -311,6 +331,65 @@ function getMemoryClusterStats() {
     }
 }
 
+// 기억 압축 : 모든 클러스터 정보를 가져오는 함수
+function getAllClusters() {
+    try {
+        const stmt = db.prepare('SELECT id, cluster_name FROM memory_clusters');
+        return stmt.all();
+    } catch (error) {
+        console.error('[DB Manager] 모든 클러스터 조회 중 오류:', error.message);
+        return [];
+    }
+}
+
+// 기억 압축 : 특정 클러스터의 보관되지 않은 기억들을 가져오는 함수
+function getUnarchivedMemoriesByCluster(clusterId) {
+    try {
+        const stmt = db.prepare(`
+            SELECT id, summary FROM long_term_memory 
+            WHERE cluster_id = ? AND (is_archived = 0 OR is_archived IS NULL)
+        `);
+        return stmt.all(clusterId);
+    } catch (error) {
+        console.error(`[DB Manager] 클러스터별 기억 조회 중 오류 (ID: ${clusterId}):`, error.message);
+        return [];
+    }
+}
+
+// 기억 압축 : 압축된 새 기억을 저장하는 함수
+function saveCompressedMemory(clusterId, summaryText, sourceMemoryIds) {
+    try {
+        const stmt = db.prepare(`
+            INSERT INTO compressed_memories (cluster_id, summary_text, source_memory_ids) 
+            VALUES (?, ?, ?)
+        `);
+        stmt.run(clusterId, summaryText, JSON.stringify(sourceMemoryIds));
+        return true;
+    } catch (error) {
+        console.error('[DB Manager] 압축된 기억 저장 중 오류:', error.message);
+        return false;
+    }
+}
+
+// 기억 압축 : 주어진 ID의 기억들을 '보관 처리'하는 함수
+function archiveMemories(memoryIds) {
+    if (!memoryIds || memoryIds.length === 0) return;
+
+    const stmt = db.prepare('UPDATE long_term_memory SET is_archived = 1 WHERE id = ?');
+    const archiveMany = db.transaction((ids) => {
+        for (const id of ids) {
+            stmt.run(id);
+        }
+    });
+
+    try {
+        archiveMany(memoryIds);
+        console.log(`[DB Manager] ${memoryIds.length}개의 기억을 성공적으로 보관 처리했습니다.`);
+    } catch (error) {
+        console.error('[DB Manager] 기억 보관 처리 중 오류:', error.message);
+    }
+}
+
 module.exports = {
     initializeDatabase,
     getChatHistory,
@@ -329,5 +408,9 @@ module.exports = {
     saveMemoryCluster,      
     addClusterIdToMemoriesTable,
     batchUpdateMemoryClusterIds,
-    getMemoryClusterStats 
+    getMemoryClusterStats,
+    getAllClusters,              
+    getUnarchivedMemoriesByCluster, 
+    saveCompressedMemory,        
+    archiveMemories  
 };
