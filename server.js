@@ -62,38 +62,81 @@ const anonymizationMap = new Map(); // 원본 <-> 코드명 변환 기록을 저
 
 // 프롬프트 변조' 헬퍼 함수
 
-function anonymizeText(text) {
-    if (!ANONYMIZATION_ENABLED) return text;
+//function anonymizeText(text) {
+    //if (!ANONYMIZATION_ENABLED) return text;
 
-    let anonymizedText = text;
-    for (const keyword of SENSITIVE_KEYWORDS) {
+    //let anonymizedText = text;
+    //for (const keyword of SENSITIVE_KEYWORDS) {
         // text 안에 키워드가 포함되어 있는지 확인
-        if (anonymizedText.includes(keyword)) {
-            let codeName = anonymizationMap.get(keyword);
+        //if (anonymizedText.includes(keyword)) {
+            //let codeName = anonymizationMap.get(keyword);
             // 이 키워드에 대한 코드명이 아직 없으면 새로 생성
-            if (!codeName) {
-                codeName = `[KEYWORD_${anonymizationMap.size + 1}]`;
-                anonymizationMap.set(keyword, codeName); // 원본 -> 코드명 저장
-                anonymizationMap.set(codeName, keyword); // 코드명 -> 원본 저장 (복원을 위해)
-            }
+            //if (!codeName) {
+                //codeName = `[KEYWORD_${anonymizationMap.size + 1}]`;
+                //anonymizationMap.set(keyword, codeName); // 원본 -> 코드명 저장
+                //anonymizationMap.set(codeName, keyword); // 코드명 -> 원본 저장 (복원을 위해)
+            //}
             // 텍스트의 모든 키워드를 코드명으로 교체
-            anonymizedText = anonymizedText.replace(new RegExp(keyword, 'g'), codeName);
-        }
-    }
-    return anonymizedText;
-}
+            //anonymizedText = anonymizedText.replace(new RegExp(keyword, 'g'), codeName);
+        //}
+    //}
+    //return anonymizedText;
+//}
 
-function deAnonymizeText(text) {
-    if (!ANONYMIZATION_ENABLED) return text;
-
+// deAnonymizeText 함수가 '해독표'를 인자로 받도록 수정합니다.
+function deAnonymizeText(text, currentAnonymizationMap) {
+    if (!ANONYMIZATION_ENABLED || !currentAnonymizationMap || currentAnonymizationMap.size === 0) return text;
     let deAnonymizedText = text;
-    // 맵에 저장된 모든 코드명을 찾아서 원본으로 복원
-    for (const [key, value] of anonymizationMap.entries()) {
-        if (key.startsWith('[')) { // key가 [KEYWORD_...] 형태일 때
-            deAnonymizedText = deAnonymizedText.replace(new RegExp(key.replace('[', '\\[').replace(']', '\\]'), 'g'), value);
+    for (const [key, value] of currentAnonymizationMap.entries()) {
+        if (key.startsWith('[')) {
+            const escapedKey = key.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+            deAnonymizedText = deAnonymizedText.replace(new RegExp(escapedKey, 'g'), value);
         }
     }
     return deAnonymizedText;
+}
+
+// formatHistoryForGoogleAI 함수가 '변환된 기록'과 '해독표'를 함께 반환하도록 수정합니다.
+function formatHistoryForGoogleAI(history) {
+    const localAnonymizationMap = new Map();
+
+    const formattedHistory = history.map(msg => ({
+        role: msg.role === 'system' ? 'user' : msg.role,
+        parts: msg.parts
+            .map(part => {
+                if (part.type === 'text') {
+                    // ▼▼▼▼▼ 바로 이 부분을 수정합니다! ▼▼▼▼▼
+                    // anonymizeText 함수 대신, 익명화 로직을 여기에 직접 구현합니다.
+                    let anonymizedText = part.text;
+                    for (const keyword of SENSITIVE_KEYWORDS) {
+                        // 텍스트에 민감한 키워드가 포함되어 있는지 확인
+                        if (anonymizedText.includes(keyword)) {
+                            // 이 키워드에 대한 코드명이 아직 없으면 새로 생성
+                            let codeName = `[KEYWORD_${SENSITIVE_KEYWORDS.indexOf(keyword) + 1}]`;
+                            
+                            // 맵에 양방향으로 기록 (해독을 위해)
+                            localAnonymizationMap.set(keyword, codeName);
+                            localAnonymizationMap.set(codeName, keyword);
+                            
+                            // 텍스트의 모든 키워드를 코드명으로 교체
+                            anonymizedText = anonymizedText.replace(new RegExp(keyword, 'g'), codeName);
+                        }
+                    }
+                    return { text: anonymizedText };
+                    // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+                }
+                if (part.type === 'image' || part.type === 'audio') {
+                    let base64Data = part.data || '';
+                    if (base64Data.startsWith('data:')) {
+                        base64Data = base64Data.split(',')[1] || '';
+                    }
+                    return { inlineData: { mimeType: part.mimeType, data: base64Data } };
+                }
+                return null;
+            }).filter(Boolean)
+    })).filter(msg => msg.parts.length > 0);
+
+    return { formattedHistory, anonymizationMap: localAnonymizationMap };
 }
 
 // --- 3. 모든 도구(Tool) 함수 정의 ---
@@ -549,40 +592,7 @@ async function processAttachmentsForAI(history) {
     }));
 }
 
-// 대화 기록을 Google AI API 형식에 맞게 변환하는 헬퍼 함수
-function formatHistoryForGoogleAI(history) {
-    // [✅ 핵심 수정] anonymizationMap을 매 대화마다 초기화합니다.
-    anonymizationMap.clear(); 
-    
-    return history.map(msg => ({
-        role: msg.role === 'system' ? 'user' : msg.role,
-        parts: msg.parts
-            .map(part => {
-                if (part.type === 'text') {
-                    // [✅ 핵심 수정] 텍스트를 바로 사용하지 않고, anonymizeText 함수를 통과시킵니다.
-                    return { text: anonymizeText(part.text) };
-                }
-                if (part.type === 'image' || part.type === 'audio') {
-                    // 1. 원본 Base64 데이터를 가져옵니다.
-                    let base64Data = part.data || '';
 
-                    // 2. 데이터가 'data:' URI 형식이라면, 순수 Base64 부분만 추출합니다.
-                    if (base64Data.startsWith('data:')) {
-                        base64Data = base64Data.split(',')[1] || '';
-                    }
-
-                    // 3. 불필요한 재인코딩 없이, Gemini API가 요구하는 형식으로 즉시 반환합니다.
-                    return {
-                        inlineData: {
-                            mimeType: part.mimeType,
-                            data: base64Data
-                        }
-                    };
-                }
-            })
-            .filter(Boolean)
-    })).filter(msg => msg.parts.length > 0);
-}
 
 // [도구 9] 음악 분석 (파이썬 서버 호출) - 현재는 비활성화
 // async function analyzeMusic(...) { /* ... */ }
@@ -1645,6 +1655,9 @@ app.post('/api/chat', async (req, res) => {
 
     try {
         const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+
+        //anonymizationMap.clear();
+
         const lastUserText = history.slice(-1)[0]?.parts.find(p => p.type === 'text')?.text.toLowerCase();
         
         // --- 경로 1: '응'과 같이 명령 실행을 확인하는 경우 ---
@@ -1890,8 +1903,14 @@ Analyze the user's request and call the most appropriate tool with the correct p
         const effectiveHistory = trimHistoryByTokenLimit(processedHistory, historyTokenLimit);
         
         const lastMessage = effectiveHistory.pop();
-        const chatHistoryForAI = formatHistoryForGoogleAI(effectiveHistory);
-        const userMessageParts = lastMessage ? formatHistoryForGoogleAI([lastMessage])[0].parts : [];
+        // 1. 각 부분을 변환하고, 생성된 '지역 해독표'를 각각 받아옵니다.
+        const { formattedHistory: chatHistoryForAI, anonymizationMap: historyMap } = formatHistoryForGoogleAI(effectiveHistory);
+        const { formattedHistory: lastMessageFormatted, anonymizationMap: lastMessageMap } = formatHistoryForGoogleAI(lastMessage ? [lastMessage] : []);
+        
+        const userMessageParts = lastMessageFormatted.length > 0 ? lastMessageFormatted[0].parts : [];
+
+        // 2. 두 개의 '해독표'를 하나로 합쳐, 이번 요청 전용 '마스터 해독표'를 만듭니다.
+        const combinedMap = new Map([...historyMap, ...lastMessageMap]);
 
         if (!userMessageParts || userMessageParts.length === 0) {
             return res.status(400).json({ message: "Cannot send an empty message." });
@@ -1910,32 +1929,29 @@ Analyze the user's request and call the most appropriate tool with the correct p
 
         if (functionCalls && functionCalls.length > 0) {
     const functionCall = functionCalls[0];
-    const { name, args } = functionCall; 
+            const { name, args } = functionCall; 
 
-    // ★★★ "또는 이름이 'createSummaryAndSave' 라면 통과시켜줘" 라는 조건을 추가 ★★★
-    if (tools[name] || name === 'createSummaryAndSave') { 
-        const deAnonymizedArgs = {};
-        for (const key in args) {
-            if (typeof args[key] === 'string') {
-                deAnonymizedArgs[key] = deAnonymizeText(args[key]);
-            } else {
-                deAnonymizedArgs[key] = args[key];
-            }
-        }
+            if (tools[name] || name === 'createSummaryAndSave') { 
+                const deAnonymizedArgs = {};
+                for (const key in args) {
+                    if (typeof args[key] === 'string') {
+                        // ✨ 'anonymizeText'가 아니라 'deAnonymizeText'를 사용합니다.
+                        deAnonymizedArgs[key] = deAnonymizeText(args[key], combinedMap);
+                    } else {
+                        deAnonymizedArgs[key] = args[key];
+                    }
+                }
 
-        let functionResult;
-        
-        if (name === 'autonomousResearcher') {
-            functionResult = await tools[name](deAnonymizedArgs, modelName);
-        } 
-        else if (name === 'createSummaryAndSave') {
-            functionResult = await createSummaryAndSave(deAnonymizedArgs, conversationHistory, genAI);
-        } 
-        else {
-            functionResult = await tools[name](deAnonymizedArgs);
-        }
-        
-        let secondResult;
+                let functionResult;
+                if (name === 'autonomousResearcher') {
+                    functionResult = await tools[name](deAnonymizedArgs, modelName);
+                } else if (name === 'createSummaryAndSave') {
+                    functionResult = await createSummaryAndSave(deAnonymizedArgs, conversationHistory, genAI);
+                } else {
+                    functionResult = await tools[name](deAnonymizedArgs);
+                }
+                
+                let secondResult;
         try {
             // --- 1. '명령어 실행' 도구의 경우, 확인 절차를 거칩니다. ---
             const parsedResult = JSON.parse(functionResult);
@@ -1943,7 +1959,7 @@ Analyze the user's request and call the most appropriate tool with the correct p
                 pendingConfirmations[chatId] = parsedResult;
                 const confirmationPrompt = `The user wants to execute the command(s) '${JSON.stringify(parsedResult.details)}'. Your task is to ask the user for confirmation to proceed. Keep your question concise and clear, in Korean. For example: "알겠습니다. 다음 명령어를 실행하려고 합니다: [명령어]. 계속할까요? (Y/N)"`;
                 secondResult = await chat.sendMessage(confirmationPrompt);
-                const deAnonymizedText = deAnonymizeText(secondResult.response.text());
+                const deAnonymizedText = deAnonymizeText(secondResult.response.text(), combinedMap);
                 finalReply = { type: 'text', text: deAnonymizedText };
                 if (secondResult) {
                     totalTokenCount += secondResult.response.usageMetadata?.totalTokenCount || 0;
@@ -1962,13 +1978,15 @@ Analyze the user's request and call the most appropriate tool with the correct p
                     const finalFunctionName = 'getCalendarEvents';
                     const functionResponse = { name: finalFunctionName, response: { name: finalFunctionName, content: functionResult } };
                     secondResult = await chat.sendMessage([{ functionResponse: functionResponse }]);
-                    finalReply = { type: 'text', text: secondResult.response.text() };
+                    const deAnonymizedText = deAnonymizeText(secondResult.response.text(), combinedMap);
+                    finalReply = { type: 'text', text: deAnonymizedText };
                     if (secondResult) totalTokenCount += secondResult.response.usageMetadata?.totalTokenCount || 0;
                 } catch (chainError) {
                      // 연계 실패 시, 원래 결과라도 보고합니다.
                     const functionResponse = { name: name, response: { name: name, content: functionResult } };
                     secondResult = await chat.sendMessage([{ functionResponse: functionResponse }]);
-                    finalReply = { type: 'text', text: secondResult.response.text() };
+                    const deAnonymizedText = deAnonymizeText(secondResult.response.text(), combinedMap);
+                    finalReply = { type: 'text', text: deAnonymizedText };
                     if (secondResult) totalTokenCount += secondResult.response.usageMetadata?.totalTokenCount || 0;
                 }
             } 
@@ -1987,7 +2005,7 @@ Analyze the user's request and call the most appropriate tool with the correct p
                 secondResult = await chat.sendMessage([ { functionResponse: functionResponse } ]);
                 
                 // [최종 답변] 보고를 받은 AI 상사가 최종 답변을 생성합니다.
-                const deAnonymizedText = deAnonymizeText(secondResult.response.text());
+                const deAnonymizedText = deAnonymizeText(secondResult.response.text(), combinedMap);
                 finalReply = { type: 'text', text: deAnonymizedText };
                 if (secondResult) {
                     totalTokenCount += secondResult.response.usageMetadata?.totalTokenCount || 0;
@@ -1999,7 +2017,7 @@ Analyze the user's request and call the most appropriate tool with the correct p
     }
 } else {
     // ✨ AI가 생성한 텍스트를 deAnonymizeText 함수로 복원합니다.
-    const deAnonymizedText = deAnonymizeText(response.text());
+    const deAnonymizedText = deAnonymizeText(result.response.text(), combinedMap);
     finalReply = { type: 'text', text: deAnonymizedText };
 }
         
@@ -2049,7 +2067,7 @@ Analyze the user's request and call the most appropriate tool with the correct p
             
             const learningModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
             const learningResult = await learningModel.generateContent(learningPrompt);
-            const suggestedCallText = learningResult.response.text();
+            const suggestedCallText = deAnonymizeText(learningResult.response.text());
 
             if (suggestedCallText && !suggestedCallText.includes("NO_UPDATE")) {
                 console.log(`[AI Learning] Found new information to learn. Suggested update: ${suggestedCallText}`);
@@ -2338,6 +2356,8 @@ cron.schedule('0 3 * * *', async () => {
 // ✨ 9차 진화: '기억의 정원사' 핵심 로직
 async function runMemoryGardenerProcess() {
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     
     const allMemories = dbManager.getAllMemories();
 
@@ -2564,15 +2584,15 @@ async function startServer() {
     }
 }
 
-// ✨✨✨ 테스트를 위해 Top-Level Await 문제를 해결하는 즉시 실행 함수로 감쌉니다. ✨✨✨
+// ✨✨✨ 테스트가 완료되었으므로, 이 블록 전체를 삭제하거나 주석 처리합니다. ✨✨✨
+/*
 (async () => {
-    // DB와 서버가 준비될 시간을 잠시 기다려줍니다. (안전장치)
     await new Promise(resolve => setTimeout(resolve, 2000)); 
-    
     console.log('[Manual Test] "기억의 정원사" 프로세스를 수동으로 실행합니다...');
     await runMemoryGardenerProcess();
     console.log('[Manual Test] 수동 실행이 완료되었습니다.');
 })();
+*/
 
 // [✅ 최종 수정] 서버 시작 함수를 호출합니다.
 startServer();
