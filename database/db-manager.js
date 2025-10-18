@@ -6,6 +6,24 @@ const dbPath = path.join(__dirname, '..', 'assistant.db');
 const db = new Database(dbPath);
 console.log('[DB Manager] assistant.db에 성공적으로 연결되었습니다.');
 
+// --- 헬퍼 함수 ---
+// 테이블에 특정 컬럼이 없으면 추가하는 범용 함수
+function addColumnIfNotExists(tableName, columnName, columnType) {
+    try {
+        const columns = db.pragma(`table_info(${tableName})`);
+        const columnExists = columns.some(col => col.name === columnName);
+        if (!columnExists) {
+            db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnType}`);
+            console.log(`[DB Manager] "${tableName}" 테이블에 "${columnName}" 컬럼을 추가했습니다.`);
+        }
+    } catch (error) {
+        // 테이블이 아직 없거나 다른 오류가 발생해도, 앱이 멈추지 않도록 처리
+        if (!error.message.includes("duplicate column name")) {
+            console.error(`[DB Manager] ${tableName} 테이블에 ${columnName} 컬럼 추가 중 오류:`, error.message);
+        }
+    }
+}
+
 // --- 테이블 초기화 함수 ---
 function initializeDatabase() {
     console.log('[DB Manager] 데이터베이스 테이블 초기화를 시작합니다...');
@@ -110,6 +128,8 @@ function initializeDatabase() {
             FOREIGN KEY (cluster_id) REFERENCES memory_clusters(id)
         );
     `);
+
+    addColumnIfNotExists('ai_reflections', 'emotional_weight', 'TEXT');
 
     console.log('[DB Manager] 테이블 초기화가 완료되었습니다.');
 }
@@ -217,14 +237,14 @@ function recordRunTime(jobName) {
 }
 
 // AI의 자기 성찰 결과를 DB에 저장하는 함수
-function saveAiReflection(entryDate, learned, improvements, insight_text) { 
+function saveAiReflection(entryDate, learned, improvements, insight_text, emotional_weight) { 
     try {
         const stmt = db.prepare(`
-            INSERT OR REPLACE INTO ai_reflections (entry_date, learned, improvements, insight_text) 
-            VALUES (?, ?, ?, ?)
-        `); // ✨ insight_text 추가
-        stmt.run(entryDate, learned, improvements, insight_text); 
-        console.log(`[DB Manager] ${entryDate} 날짜의 AI 성찰 및 인사이트 기록을 저장했습니다.`);
+            INSERT OR REPLACE INTO ai_reflections (entry_date, learned, improvements, insight_text, emotional_weight) 
+            VALUES (?, ?, ?, ?, ?)
+        `); 
+        stmt.run(entryDate, learned, improvements, insight_text, emotional_weight); 
+        console.log(`[DB Manager] ${entryDate} 날짜의 AI 성찰 및 감정 기록을 저장했습니다.`);
         return true;
     } catch (error) {
         console.error('[DB Manager] AI 성찰 기록 저장 중 오류:', error.message);

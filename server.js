@@ -2356,39 +2356,46 @@ cron.schedule('0 3 * * *', async () => {
 // ✨ 9차 진화: '기억의 정원사' 핵심 로직
 async function runMemoryGardenerProcess() {
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     
     const allMemories = dbManager.getAllMemories();
 
-    // --- 1. 자기 성찰 (Reflective AI) ---
-    console.log('[Memory Gardener] STEP 1: 어제의 대화를 바탕으로 자기 성찰을 시작합니다.');
+    // --- 1. 자기 성찰 및 감정 분석 ---
+    console.log('[Memory Gardener] STEP 1: 어제의 대화를 바탕으로 자기 성찰 및 감정 분석을 시작합니다.');
+
     const today = new Date();
     const yesterday = new Date(today);
     yesterday.setDate(today.getDate() - 1);
     const yesterdayDateString = yesterday.toISOString().split('T')[0];
     const yesterdayMemories = allMemories.filter(mem => mem.timestamp.startsWith(yesterdayDateString));
 
+    // 기본값 설정
     let learned_text = "어제는 대화가 없었습니다.";
     let improvements_text = "오늘은 사용자와 더 많은 대화를 나눌 수 있기를 바랍니다.";
     let insight_text = "어제는 활동이 없어 분석할 데이터가 부족합니다.";
+    let emotional_weight = "중립"; // ✨ 감정 기본값
 
-    if (yesterdayMemories.length > 0) {
+    if (yesterdayMemories.length === 0) {
+        console.log('[Memory Gardener] 어제는 대화 기록이 없었으므로, 기본 메시지를 기록합니다.');
+    } else {
         const memoriesText = yesterdayMemories.map(m => `- ${m.summary}`).join('\n');
-
+        
+        // ✨ 프롬프트에 'emotional_weight' 질문 추가!
         const reflectionPrompt = `
             당신은 어제의 대화 기록을 분석하여 스스로 성장하는 AI입니다.
-            아래의 [어제 대화 요약]을 바탕으로, 다음 세 가지 질문에 대해 각각 한 문장으로 간결하게 답변해주세요.
+            아래의 [어제 대화 요약]을 바탕으로, 다음 네 가지 질문에 대해 각각 한 문장으로 간결하게 답변해주세요.
 
             1.  **learned**: 어제 사용자와의 대화를 통해 새롭게 배운 가장 중요한 사실이나 정보는 무엇입니까?
             2.  **improvements**: 내일 사용자와 더 나은 대화를 하기 위해 개선해야 할 점이 있다면 무엇입니까?
-            3.  **insight**: 어제의 대화 주제 분포나 나의 답변 경향을 분석했을 때, 나 자신에 대해 내릴 수 있는 결론(인사이트)은 무엇입니까? (예: "어제는 기술 관련 주제에 평소보다 더 깊이 몰입했으며, 사용자에게 긍정적인 피드백을 많이 제공했다.")
+            3.  **insight**: 어제의 대화 주제 분포나 나의 답변 경향을 분석했을 때, 나 자신에 대해 내릴 수 있는 결론(인사이트)은 무엇입니까?
+            4.  **emotional_weight**: 어제의 대화 전반에 나타난 나의 상태를 '긍정', '중립', '부정', '혼란', '성취' 중 가장 적합한 단어 하나로 평가해주세요.
 
             **응답 형식 (반드시 이 JSON 형식을 지켜주세요. 다른 설명은 절대 추가하지 마세요):**
             {
                 "learned": "어제 배운 점에 대한 한 문장 요약입니다.",
                 "improvements": "개선할 점에 대한 한 문장 요약입니다.",
-                "insight": "나 자신에 대한 한 문장짜리 인사이트입니다."
+                "insight": "나 자신에 대한 한 문장짜리 인사이트입니다.",
+                "emotional_weight": "긍정"
             }
 
             [어제 대화 요약]:
@@ -2404,24 +2411,25 @@ async function runMemoryGardenerProcess() {
             }
             const reflectionJSON = JSON.parse(jsonMatch[0]);
 
-            // AI가 생성한 텍스트로 변수 값을 업데이트
+            // ✨ AI가 생성한 텍스트로 모든 변수 값을 업데이트
             learned_text = reflectionJSON.learned;
             improvements_text = reflectionJSON.improvements;
             insight_text = reflectionJSON.insight;
+            emotional_weight = reflectionJSON.emotional_weight || "중립"; // AI가 답변을 안했을 경우를 대비
 
-            console.log(`[Memory Gardener] 자기 성찰 및 인사이트 생성 완료:`);
+            console.log(`[Memory Gardener] 자기 성찰 및 감정 분석 완료:`);
             console.log(`  - 어제 배운 점: ${learned_text}`);
             console.log(`  - 개선할 점: ${improvements_text}`);
             console.log(`  - 자기 인사이트: ${insight_text}`);
+            console.log(`  - 어제의 감정: ${emotional_weight}`);
 
         } catch (error) {
             console.error('[Memory Gardener] 자기 성찰 중 AI 호출 또는 JSON 파싱 오류:', error);
-            // 오류가 발생해도 기본 텍스트를 사용해 계속 진행
         }
     }
     
-    // ✨ 최종적으로 성찰, 개선점, 인사이트를 DB에 저장합니다.
-    dbManager.saveAiReflection(yesterdayDateString, learned_text, improvements_text, insight_text);
+    // ✨ 최종적으로 모든 결과를 DB에 저장합니다. (emotional_weight 포함)
+    dbManager.saveAiReflection(yesterdayDateString, learned_text, improvements_text, insight_text, emotional_weight);
 
     // --- 2. 의미 클러스터링 ---
     console.log('[Memory Gardener] STEP 2: 모든 기억의 의미 클러스터링을 시작합니다.');
@@ -2638,15 +2646,20 @@ async function startServer() {
     }
 }
 
-// ✨✨✨ 테스트가 완료되었으므로, 이 블록 전체를 삭제하거나 주석 처리합니다. ✨✨✨
-/*
+// ▼▼▼▼▼ 바로 이 부분을 임시로 추가해주세요 ▼▼▼▼▼
+
+// ✨ '기억의 정원사' 수동 실행 테스트 코드
 (async () => {
+    // 서버와 DB가 준비될 시간을 2초 정도 기다려줍니다. (안전장치)
     await new Promise(resolve => setTimeout(resolve, 2000)); 
+    
     console.log('[Manual Test] "기억의 정원사" 프로세스를 수동으로 실행합니다...');
+    // 우리가 테스트하고 싶은 함수를 여기서 직접 호출합니다.
     await runMemoryGardenerProcess();
     console.log('[Manual Test] 수동 실행이 완료되었습니다.');
 })();
-*/
+
+// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
 // [✅ 최종 수정] 서버 시작 함수를 호출합니다.
 startServer();
