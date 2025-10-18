@@ -2564,6 +2564,46 @@ app.get('/api/memories', (req, res) => {
     }
 });
 
+// 기억과 성찰을 통합한 타임라인 데이터를 제공하는 API
+app.get('/api/unified-timeline', (req, res) => {
+    try {
+        // 1. 두 종류의 데이터를 각각 DB에서 가져옵니다.
+        const memories = dbManager.getMemoriesForBrowser(req.query);
+        const reflections = dbManager.getReflectionsForBrowser(req.query);
+
+        // 2. 두 데이터를 하나의 타임라인으로 합칩니다.
+        const timeline = [];
+
+        // 기억 데이터를 타임라인에 추가
+        memories.forEach(mem => {
+            timeline.push({
+                type: 'memory', // 이 항목의 종류는 '기억'
+                timestamp: mem.timestamp,
+                data: mem 
+            });
+        });
+
+        // 성찰 데이터를 타임라인에 추가
+        reflections.forEach(ref => {
+            // 성찰 기록은 해당 날짜의 끝(23:59:59)에 일어난 일처럼 처리하여 정렬
+            const reflectionTimestamp = new Date(`${ref.entry_date}T23:59:59Z`).toISOString();
+            timeline.push({
+                type: 'reflection', // 이 항목의 종류는 '성찰'
+                timestamp: reflectionTimestamp,
+                data: ref
+            });
+        });
+
+        // 3. 모든 항목을 최신 시간순으로 정렬합니다.
+        timeline.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+        res.json(timeline);
+    } catch (error) {
+        console.error('[API /unified-timeline] 오류:', error);
+        res.status(500).json({ message: '타임라인 데이터를 가져오는 중 오류 발생' });
+    }
+});
+
 // --- 7. 서버 실행 (가장 마지막에!) ---
 async function startServer() {
     console.log('[Server Startup] 서버 시작 절차를 개시합니다...');

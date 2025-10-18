@@ -433,6 +433,28 @@ function getMemoriesForBrowser(filters = {}) {
     }
 }
 
+// 성찰 로그 뷰어를 위한 데이터 조회 함수
+function getReflectionsForBrowser(filters = {}) {
+    try {
+        // 나중에 날짜 범위 필터링 등을 위해 확장 가능하도록 설계
+        const stmt = db.prepare(`
+            SELECT 
+                entry_date,
+                learned,
+                improvements,
+                insight_text
+            FROM 
+                ai_reflections
+            ORDER BY 
+                entry_date DESC
+        `);
+        return stmt.all(); // 예: [{ entry_date: '2025-10-18', learned: '...', ...}, ...]
+    } catch (error) {
+        console.error('[DB Manager] 성찰 로그 데이터 조회 중 오류:', error.message);
+        return [];
+    }
+}
+
 module.exports = {
     initializeDatabase,
     getChatHistory,
@@ -456,5 +478,6 @@ module.exports = {
     getUnarchivedMemoriesByCluster, 
     saveCompressedMemory,        
     archiveMemories,
-    getMemoriesForBrowser  
+    getMemoriesForBrowser,
+    getReflectionsForBrowser  
 };
