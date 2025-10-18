@@ -4,7 +4,8 @@ import { saveData } from '../../utils/storage.js';
 import { ApiSettings } from '../modules/settings/ApiSettings.js';
 import { UsageReporter } from '../modules/settings/UsageReporter.js';
 import { GeneralSettings } from '../modules/settings/GeneralSettings.js';
-import { MemoryVisualizer } from '../modules/settings/MemoryVisualizer.js';
+import { MemoryVisualizer } from '../modules/settings/MemoryVisualizer.js'; 
+import { MemoryBrowser } from '../modules/settings/MemoryBrowser.js'; 
 
 let elements = {};
 let isInitialized = false;
@@ -38,6 +39,8 @@ function handleTabClick(e) {
     // '데이터 관리' 탭(tab-data)이 클릭되면, MemoryVisualizer를 실행하도록 추가합니다.
     else if (targetTabId === 'tab-data') {
         MemoryVisualizer.render();
+    } else if (targetTabId === 'tab-memory-browser') { 
+        MemoryBrowser.render();
     }
 }
 
@@ -119,6 +122,8 @@ export const SettingsController = {
         const activeTab = document.querySelector('#settings-tabs-list .tab-btn.active')?.dataset.tab;
         if (activeTab === 'tab-data') {
             MemoryVisualizer.render();
+        } else if (activeTab === 'tab-memory-browser') { 
+            MemoryBrowser.render();
         }
 
         isInitialized = true;

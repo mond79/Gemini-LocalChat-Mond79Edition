@@ -390,6 +390,49 @@ function archiveMemories(memoryIds) {
     }
 }
 
+// 기억 브라우저를 위한 데이터 조회 함수
+function getMemoriesForBrowser(filters = {}) {
+    // 향후 필터링 기능 확장을 위해 filters 객체를 인자로 받도록 설계합니다.
+    // 예: filters = { clusterId: 1, isArchived: false }
+    try {
+        // SQL 쿼리문을 동적으로 만들기 위해 준비합니다.
+        let baseQuery = `
+            SELECT 
+                ltm.id, 
+                ltm.summary, 
+                ltm.timestamp, 
+                ltm.is_archived,
+                mc.cluster_name 
+            FROM 
+                long_term_memory ltm
+            LEFT JOIN 
+                memory_clusters mc ON ltm.cluster_id = mc.id
+        `;
+        
+        let whereClauses = [];
+        let params = [];
+
+        // (향후 여기에 필터링 로직을 추가할 수 있습니다)
+        // if (filters.isArchived !== undefined) {
+        //     whereClauses.push('ltm.is_archived = ?');
+        //     params.push(filters.isArchived ? 1 : 0);
+        // }
+
+        if (whereClauses.length > 0) {
+            baseQuery += ' WHERE ' + whereClauses.join(' AND ');
+        }
+
+        baseQuery += ' ORDER BY ltm.timestamp DESC'; // 항상 최신순으로 정렬
+
+        const stmt = db.prepare(baseQuery);
+        return stmt.all(...params);
+
+    } catch (error) {
+        console.error('[DB Manager] 기억 브라우저 데이터 조회 중 오류:', error.message);
+        return [];
+    }
+}
+
 module.exports = {
     initializeDatabase,
     getChatHistory,
@@ -412,5 +455,6 @@ module.exports = {
     getAllClusters,              
     getUnarchivedMemoriesByCluster, 
     saveCompressedMemory,        
-    archiveMemories  
+    archiveMemories,
+    getMemoriesForBrowser  
 };

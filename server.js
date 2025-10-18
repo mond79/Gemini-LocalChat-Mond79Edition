@@ -2550,6 +2550,20 @@ app.get('/api/memory-stats', (req, res) => {
     }
 });
 
+// 기억 브라우저용 API 엔드포인트
+app.get('/api/memories', (req, res) => {
+    try {
+        // db-manager에게 기억 목록을 요청합니다. (향후 req.query를 통해 필터링 가능)
+        const memories = dbManager.getMemoriesForBrowser(req.query);
+        
+        // 조회된 데이터를 JSON 형태로 프론트엔드에 응답합니다.
+        res.json(memories);
+    } catch (error) {
+        console.error('[API /memories] 오류:', error);
+        res.status(500).json({ message: '기억을 불러오는 중 오류가 발생했습니다.' });
+    }
+});
+
 // --- 7. 서버 실행 (가장 마지막에!) ---
 async function startServer() {
     console.log('[Server Startup] 서버 시작 절차를 개시합니다...');

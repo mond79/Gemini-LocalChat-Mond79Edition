@@ -188,7 +188,7 @@
             <div id="settings-page">
                 <div class="settings-page-header"><h1>설정</h1></div>
                 <div class="settings-page-layout">
-                    <nav class="settings-nav"><ul id="settings-tabs-list"><li><button class="tab-btn active" data-tab="tab-api">API 및 모델</button></li><li><button class="tab-btn" data-tab="tab-interface">인터페이스</button></li><li><button class="tab-btn" data-tab="tab-data">데이터 관리</button></li><li><button class="tab-btn" data-tab="tab-usage">API 사용량</button></li></ul></nav>
+                    <nav class="settings-nav"><ul id="settings-tabs-list"><li><button class="tab-btn active" data-tab="tab-api">API 및 모델</button></li><li><button class="tab-btn" data-tab="tab-interface">인터페이스</button></li><li><button class="tab-btn" data-tab="tab-data">데이터 관리</button></li><li><button class="tab-btn" data-tab="tab-usage">API 사용량</button></li><li><button class="tab-btn" data-tab="tab-memory-browser">📚 기억 브라우저</button></li></ul></nav>
                     <main class="settings-content">
                         <div id="tab-api" class="tab-content active">
                            <div class="settings-section"><div class="settings-group settings-group--default"><label for="api-key">기본 Gemini API Key</label><div class="api-input-wrapper"><input type="password" id="api-key" placeholder="기본 API 키를 입력하세요"><button id="validate-key-btn">API 키 검증</button></div></div><div id="validation-status" class="status-message"></div></div>
@@ -226,6 +226,23 @@
                                </div>
                            </div>
                         </div>
+                        <!-- ▼▼▼▼▼ 바로 여기에 새 탭의 콘텐츠 공간을 추가해주세요 ▼▼▼▼▼ -->
+                        <div id="tab-memory-browser" class="tab-content">
+                            <div class="settings-section">
+                                <h2 class="section-title">기억 탐색기</h2>
+                                <p class="section-description">AI의 모든 장기 기억을 최신순으로 탐색하고 관리합니다.</p>
+                                
+                                <!-- (향후 여기에 필터링 UI가 들어갈 자리) -->
+                                <div id="memory-browser-controls" style="margin-top: 15px;">
+                                </div>
+                                
+                                <!-- 기억 목록이 표시될 스크롤 가능한 컨테이너 -->
+                                <div id="memory-browser-list" class="memory-browser-list" style="margin-top: 15px; height: 500px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px; padding: 10px;">
+                                    <p>기억을 불러오는 중...</p>
+                                </div>
+                            </div>
+                        </div>
+                        
                     </main>
                 </div>
             </div>
