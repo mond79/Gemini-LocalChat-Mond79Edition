@@ -27,12 +27,16 @@ async function fetchDailySummaries() {
     }
 }
 
-// T2 톤: 차분/일기형 인사이트 문장 생성
-function buildEmotionInsight(summary) {
-    if (!summary || !summary.narrative) {
-        return "오늘의 일기가 아직 작성되지 않았습니다.";
+// ✨ API 호출: 최신 주간 메타 성찰
+async function fetchLatestMetaInsight() {
+    try {
+        const res = await fetch('/api/emotion-meta');
+        if (!res.ok) throw new Error('메타 성찰 데이터 로드 실패');
+        return await res.json();
+    } catch (e) {
+        console.error('[LunaDiary] emotion-meta API 오류:', e);
+        return null;
     }
-    return summary.narrative; // AI가 직접 쓴 '하루 요약 서사'를 그대로 반환
 }
 
 // 도넛 차트 렌더링
@@ -191,33 +195,61 @@ function renderReflectionTimeline(container, summaries) {
     }).join('<hr style="border: 0; border-top: 1px solid var(--border-color); margin: 25px 0;">');
 }
 
+// ✨ 주간 메타 성찰 UI를 렌더링하는 새로운 함수
+function renderMetaInsight(container, insight) {
+    if (!container) return;
+    const textColor = getComputedStyle(document.documentElement).getPropertyValue('--text-color-primary').trim();
+    const secondaryColor = getComputedStyle(document.documentElement).getPropertyValue('--text-color-secondary').trim();
 
+    if (!insight || !insight.narrative) {
+        container.innerHTML = `<p style="color:${secondaryColor};">표시할 주간 메타 성찰이 아직 없습니다. (매주 일요일 자정에 자동 생성됩니다)</p>`;
+        return;
+    }
+
+    const dominantEmoji = emotionEmojiMap[insight.dominant_emotion] || '🤔';
+    
+    container.innerHTML = `
+        <div style="background-color: var(--background-color-secondary); border-left: 5px solid var(--primary-color); padding: 15px 20px; border-radius: 8px;">
+            <p style="margin: 0; color: ${textColor}; white-space: pre-wrap; line-height: 1.6;">${insight.narrative}</p>
+            <div style="margin-top: 15px; font-size: 0.9em; color: ${secondaryColor};">
+                <strong>주간 요약:</strong> ${dominantEmoji} ${insight.dominant_emotion}
+            </div>
+        </div>
+    `;
+}
+
+// --- 최종 Export ---
 // --- 최종 Export ---
 export const LunaDiary = {
     async render() {
+        // 1. UI 컨테이너들을 가져옵니다.
         const chartCanvas = document.getElementById('emotion-chart');
         const insightBox  = document.getElementById('emotion-insight');
         const legendBox   = document.getElementById('emotion-legend');
         const diaryBox    = document.getElementById('reflection-timeline-container');
+        const metaBox     = document.getElementById('meta-insight-container');
 
-        if (insightBox) insightBox.innerHTML = `<p>감정 데이터를 불러오는 중...</p>`;
-        if (diaryBox) diaryBox.innerHTML = `<p>루나의 일기를 정리하는 중...</p>`;
+        // 2. 로딩 메시지를 먼저 표시합니다.
+        if (insightBox) insightBox.innerHTML = `<p style="color:var(--text-color-secondary);">감정 데이터를 불러오는 중...</p>`;
+        if (diaryBox) diaryBox.innerHTML = `<p style="color:var(--text-color-secondary);">루나의 일기를 정리하는 중...</p>`;
+        if (metaBox) metaBox.innerHTML = `<p style="color:var(--text-color-secondary);">주간 메타 성찰을 불러오는 중...</p>`;
 
         // 1. 모든 데이터를 병렬로 불러옵니다.
-        const [stats, summaries] = await Promise.all([
+        const [stats, summaries, metaInsight] = await Promise.all([
             fetchEmotionStats(),
-            fetchDailySummaries()
+            fetchDailySummaries(),
+            fetchLatestMetaInsight()
         ]);
 
         // 2. 감정 차트 렌더링
         const renderedChart = renderEmotionChart(chartCanvas, stats);
         renderCustomLegend(legendBox, renderedChart.labels, renderedChart.colors);
-        
-        // ▼▼▼▼▼ 바로 이 부분을 수정합니다! ▼▼▼▼▼
+
+        // ▼▼▼▼▼ 바로 이 부분을 다시 수정합니다! ▼▼▼▼▼
 
         // 3. '오늘의 일기'와 '과거의 일기'로 데이터를 분리합니다.
-        const latestSummary = summaries.length > 0 ? summaries[0] : null;
-        const pastSummaries = summaries.length > 1 ? summaries.slice(1) : []; // 두 번째 항목부터 끝까지
+        const latestSummary = summaries && summaries.length > 0 ? summaries[0] : null;
+        const pastSummaries = summaries && summaries.length > 1 ? summaries.slice(1) : []; // 두 번째 항목부터 끝까지
 
         // 4. 감성 인사이트에는 '오늘의 일기'만 전달합니다.
         renderEmotionInsight(insightBox, latestSummary);
@@ -225,5 +257,7 @@ export const LunaDiary = {
         // 5. 성장 일기 타임라인에는 '과거의 일기' 목록만 전달합니다.
         renderReflectionTimeline(diaryBox, pastSummaries);
         
+        // 6. 주간 메타 성찰 렌더링
+        renderMetaInsight(metaBox, metaInsight);
     }
 };

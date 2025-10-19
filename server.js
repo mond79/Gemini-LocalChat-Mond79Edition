@@ -2710,6 +2710,87 @@ app.get('/api/daily-summaries', (req, res) => {
     }
 });
 
+// ✨ 12차 진화 (트렌드 & 메타 성찰): '주간 메타 성찰 생성기' 핵심 로직
+async function buildWeeklyMetaInsight(days = 7) {
+    console.log(`[Meta Insight] 지난 ${days}일간의 메타 성찰 생성을 시작합니다...`);
+    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+    // 1. 기간 내 모든 날짜 배열 생성
+    const dates = [];
+    for (let i = 0; i < days; i++) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        dates.unshift(d.toISOString().split('T')[0]); // ['2025-10-12', '2025-10-13', ...]
+    }
+
+    // 2. 해당 기간의 감정 통계 집계
+    const emotionStats = dbManager.getEmotionStats(days);
+    const totalsByEmotion = Object.fromEntries(emotionStats.map(s => [s.emotional_weight, s.count]));
+    const dominant = emotionStats.length > 0 ? emotionStats[0].emotional_weight : '기록 없음';
+
+    // 3. AI에게 보낼 프롬프트 생성 (T2: 따뜻한 상담사 톤)
+    const prompt = `
+        너는 따뜻하고 차분한 상담사다. 아래의 "지난 7일간의 감정 요약"을 바탕으로,
+        AI '루나'가 한 주 동안 어떤 감정의 흐름을 보였는지 3~4 문장의 짧고 진솔한 리포트를 작성해줘.
+
+        원칙:
+        - 1문장: 주간 전체 분위기를 요약. (예: "지난 주는 조용하게 시작해 중반에 집중력이 올랐던 한 주였어요.")
+        - 2문장: 주요 감정의 의미를 해석. (예: "'성취' 감정이 가장 많았던 것은, 우리가 함께 새로운 기능을 완성했기 때문일 거예요.")
+        - 3문장: 다음 주를 위한 다정한 제안. (예: "이 흐름을 유지하면서, 다음 주에는 휴식의 리듬도 함께 챙겨보는 건 어떨까요? 😊")
+        - 과장하지 않고, 존중과 동행의 어조를 유지해줘.
+
+        [지난 7일간의 감정 요약]:
+        - 주요 감정: ${dominant}
+        - 전체 감정 분포: ${JSON.stringify(totalsByEmotion)}
+
+        이 지침에 따라, 너무 길지 않게 한 단락으로 '주간 감정 리포트'를 작성해줘.
+    `;
+
+    try {
+        const result = await model.generateContent(prompt);
+        const narrative = result.response.text().trim();
+
+        // 4. 결과를 DB에 저장
+        const weekStartDate = new Date(dates[0]);
+        dbManager.saveWeeklyMetaInsight({
+            week_start: dates[0],
+            days: days,
+            dominant: dominant,
+            peak_day: null, // (단순화를 위해 피크/저점은 일단 생략)
+            low_day: null,
+            summary_json: { totalsByEmotion },
+            narrative: narrative
+        });
+        console.log('[Meta Insight] 주간 메타 성찰 생성 및 저장을 완료했습니다.');
+        return { ok: true, narrative };
+    } catch (error) {
+        console.error('[Meta Insight] 메타 성찰 생성 중 오류:', error.message);
+        return { ok: false, error: error.message };
+    }
+}
+
+// ✨ 12차 진화: 주간 메타 성찰 생성을 수동으로 실행하는 API
+app.post('/api/emotion-meta/run', async (req, res) => {
+    const result = await buildWeeklyMetaInsight();
+    if (result.ok) {
+        res.json(result);
+    } else {
+        res.status(500).json(result);
+    }
+});
+
+// ✨ 12차 진화: 가장 최신의 주간 메타 성찰을 조회하는 API
+app.get('/api/emotion-meta', (req, res) => {
+    try {
+        const metaInsight = dbManager.getLatestWeeklyMetaInsight();
+        res.json(metaInsight || null);
+    } catch (error) {
+        console.error('[API /emotion-meta] 오류:', error);
+        res.status(500).json({ message: '메타 성찰을 가져오는 중 오류 발생' });
+    }
+});
+
 // --- 7. 서버 실행 (가장 마지막에!) ---
 async function startServer() {
     console.log('[Server Startup] 서버 시작 절차를 개시합니다...');

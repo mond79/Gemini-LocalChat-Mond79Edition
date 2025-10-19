@@ -131,7 +131,7 @@ function initializeDatabase() {
 
     addColumnIfNotExists('ai_reflections', 'emotional_weight', 'TEXT');
 
-    // ✨ 12차 진화: '하루 요약 서사'를 저장할 새 테이블
+    // '하루 요약 서사'를 저장할 새 테이블
     db.exec(`
         CREATE TABLE IF NOT EXISTS daily_summaries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -140,6 +140,22 @@ function initializeDatabase() {
             emotion_counts TEXT,
             narrative TEXT,
             highlights TEXT
+        );
+    `);
+
+    // 메타 성찰 : '주간 메타 성찰' 기록을 저장할 새 테이블
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS weekly_meta_insights (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            week_start TEXT NOT NULL UNIQUE,
+            days_range INTEGER NOT NULL,
+            dominant_emotion TEXT,
+            peak_day TEXT,
+            low_day TEXT,
+            summary_json TEXT,
+            narrative TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
     `);
 
@@ -564,6 +580,39 @@ function getDailySummaries() {
     } catch (e) { return []; }
 }
 
+// ✨ 12차 진화 (메타 성찰): '주간 메타 성찰'을 저장/업데이트하는 함수
+function saveWeeklyMetaInsight(insight) {
+    try {
+        const stmt = db.prepare(`
+            INSERT INTO weekly_meta_insights (week_start, days_range, dominant_emotion, peak_day, low_day, summary_json, narrative, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(week_start) DO UPDATE SET
+                days_range = excluded.days_range,
+                dominant_emotion = excluded.dominant_emotion,
+                peak_day = excluded.peak_day,
+                low_day = excluded.low_day,
+                summary_json = excluded.summary_json,
+                narrative = excluded.narrative,
+                updated_at = CURRENT_TIMESTAMP
+        `);
+        stmt.run(
+            insight.week_start, insight.days, insight.dominant,
+            insight.peak_day, insight.low_day,
+            JSON.stringify(insight.summary_json), insight.narrative
+        );
+    } catch (error) {
+        console.error('[DB Manager] 주간 메타 성찰 저장 중 오류:', error.message);
+    }
+}
+
+// ✨ 12차 진화 (메타 성찰): 가장 최신의 '주간 메타 성찰'을 가져오는 함수
+function getLatestWeeklyMetaInsight() {
+    try {
+        const stmt = db.prepare('SELECT * FROM weekly_meta_insights ORDER BY week_start DESC LIMIT 1');
+        return stmt.get();
+    } catch (e) { return null; }
+}
+
 module.exports = {
     initializeDatabase,
     getChatHistory,
@@ -593,5 +642,7 @@ module.exports = {
     getMemoriesByDate,
     getReflectionByDate,
     saveDailyNarrative,
-    getDailySummaries  
+    getDailySummaries,
+    saveWeeklyMetaInsight,     
+    getLatestWeeklyMetaInsight  
 };
