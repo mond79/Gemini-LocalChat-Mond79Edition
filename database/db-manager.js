@@ -131,6 +131,18 @@ function initializeDatabase() {
 
     addColumnIfNotExists('ai_reflections', 'emotional_weight', 'TEXT');
 
+    // ✨ 12차 진화: '하루 요약 서사'를 저장할 새 테이블
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS daily_summaries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entry_date TEXT NOT NULL UNIQUE,
+            dominant_emotion TEXT,
+            emotion_counts TEXT,
+            narrative TEXT,
+            highlights TEXT
+        );
+    `);
+
     console.log('[DB Manager] 테이블 초기화가 완료되었습니다.');
 }
 
@@ -501,6 +513,57 @@ function getReflectionsForBrowser(filters = {}) {
     }
 }
 
+// 특정 날짜의 기억들을 가져오는 함수
+function getMemoriesByDate(dateStr) { // dateStr = 'YYYY-MM-DD'
+    try {
+        const stmt = db.prepare(`
+            SELECT summary, cluster_name FROM long_term_memory 
+            WHERE date(timestamp) = ? 
+            ORDER BY timestamp DESC
+        `);
+        return stmt.all(dateStr);
+    } catch (e) { return []; }
+}
+
+// 특정 날짜의 성찰 기록을 가져오는 함수
+function getReflectionByDate(dateStr) {
+    try {
+        const stmt = db.prepare('SELECT * FROM ai_reflections WHERE entry_date = ?');
+        return stmt.get(dateStr);
+    } catch (e) { return null; }
+}
+
+// '하루 요약'을 저장/업데이트(upsert)하는 함수
+function saveDailyNarrative(summary) {
+    try {
+        const stmt = db.prepare(`
+            INSERT INTO daily_summaries (entry_date, dominant_emotion, emotion_counts, narrative, highlights)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(entry_date) DO UPDATE SET
+                dominant_emotion = excluded.dominant_emotion,
+                emotion_counts = excluded.emotion_counts,
+                narrative = excluded.narrative,
+                highlights = excluded.highlights
+        `);
+        stmt.run(
+            summary.date, 
+            summary.dominantEmotion, 
+            JSON.stringify(summary.emotionCounts),
+            summary.narrative,
+            JSON.stringify(summary.highlights)
+        );
+    } catch (error) {
+        console.error('[DB Manager] 하루 요약 저장 중 오류:', error.message);
+    }
+}
+
+function getDailySummaries() {
+    try {
+        const stmt = db.prepare('SELECT * FROM daily_summaries ORDER BY entry_date DESC');
+        return stmt.all();
+    } catch (e) { return []; }
+}
+
 module.exports = {
     initializeDatabase,
     getChatHistory,
@@ -526,5 +589,9 @@ module.exports = {
     archiveMemories,
     getMemoriesForBrowser,
     getReflectionsForBrowser,
-    getEmotionStats  
+    getEmotionStats,
+    getMemoriesByDate,
+    getReflectionByDate,
+    saveDailyNarrative,
+    getDailySummaries  
 };

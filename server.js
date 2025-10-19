@@ -2524,6 +2524,59 @@ async function runMemoryGardenerProcess() {
             }
         }
     }
+
+    // --- 4. 하루 요약 서사 생성 (Daily Narrative) ---
+    console.log('[Memory Gardener] STEP 4: 어제의 하루를 요약하는 서사를 생성합니다.');
+    try {
+        // (1) 어제의 핵심 데이터를 다시 수집합니다.
+        const emotionStats = dbManager.getEmotionStats(1); // '1' = 최근 1일
+        const yesterdayMemoriesForNarrative = dbManager.getMemoriesByDate(yesterdayDateString);
+        const yesterdayReflection = dbManager.getReflectionByDate(yesterdayDateString);
+
+        const dominantEmotion = emotionStats.length > 0 ? emotionStats[0].emotional_weight : '기록 없음';
+        const emotionCounts = Object.fromEntries(emotionStats.map(s => [s.emotional_weight, s.count]));
+        
+        // (2) AI에게 보낼 프롬프트를 생성합니다 (T2: 차분한 일기 톤).
+        const narrativePrompt = `
+            너는 감성적이지만 과장하지 않는 AI 일기 작가다.
+            주어진 [감정 통계]와 [주요 활동 요약], 그리고 너의 [성찰 기록]을 바탕으로 어제의 하루를 요약하는 일기를 작성해라.
+            말투는 담담하고 부드럽게, 2~3 문장의 짧은 문단으로 작성해야 한다. 이모지는 사용하지 않는다.
+
+            [감정 통계]
+            - 주요 감정: ${dominantEmotion}
+            - 전체 분포: ${JSON.stringify(emotionCounts)}
+
+            [주요 활동 요약 (최대 5개)]
+            ${yesterdayMemoriesForNarrative.slice(0, 5).map(m => `- ${m.summary}`).join('\n')}
+
+            [너의 성찰 기록]
+            - 배운 점: ${yesterdayReflection?.learned || '기록 없음'}
+            - 개선할 점: ${yesterdayReflection?.improvements || '기록 없음'}
+            - 내면의 생각: ${yesterdayReflection?.insight_text || '기록 없음'}
+
+            위 정보를 바탕으로, 규칙에 맞춰 어제의 일기를 작성해라.
+        `;
+
+        // (3) AI를 호출하여 '하루 요약 서사'를 생성합니다.
+        const result = await model.generateContent(narrativePrompt);
+        const narrativeText = result.response.text().trim();
+
+        // (4) 결과를 DB에 저장(Upsert)합니다.
+        const summaryToSave = {
+            date: yesterdayDateString,
+            dominantEmotion: dominantEmotion,
+            emotionCounts: emotionCounts,
+            narrative: narrativeText,
+            highlights: yesterdayMemoriesForNarrative.slice(0, 3).map(m => m.cluster_name || '일반 대화')
+        };
+        dbManager.saveDailyNarrative(summaryToSave);
+
+        console.log(`[Memory Gardener] 하루 요약 서사 생성 및 저장 완료.`);
+        console.log(`  > ${narrativeText}`);
+
+    } catch (error) {
+        console.error('[Memory Gardener] 하루 요약 서사 생성 중 오류 발생:', error);
+    }
 } // <--- 여기가 함수의 끝입니다.
 
 // 매일 자정(0시 0분)에 '기억의 정원사' 프로세스 실행
@@ -2633,7 +2686,7 @@ app.get('/api/emotion-stats', (req, res) => {
     }
 });
 
-// ✨ 12차 진화 (성장 일기): 성찰 기록 데이터를 제공하는 API
+// 성장 일기 : 성찰 기록 데이터를 제공하는 API
 app.get('/api/reflections', (req, res) => {
     try {
         // 이 함수는 이전에 우리가 이미 만들어 두었습니다.
@@ -2644,6 +2697,19 @@ app.get('/api/reflections', (req, res) => {
         res.status(500).json({ message: '성찰 기록을 가져오는 중 오류가 발생했습니다.' });
     }
 });
+
+// 하루 요약 : '하루 요약' 목록을 제공하는 API
+app.get('/api/daily-summaries', (req, res) => {
+    try {
+        // (이 함수는 DB 매니저에 새로 만들어야 합니다)
+        const summaries = dbManager.getDailySummaries(); 
+        res.json(summaries);
+    } catch (error) {
+        console.error('[API /daily-summaries] 오류:', error);
+        res.status(500).json({ message: '하루 요약 기록을 가져오는 중 오류 발생' });
+    }
+});
+
 // --- 7. 서버 실행 (가장 마지막에!) ---
 async function startServer() {
     console.log('[Server Startup] 서버 시작 절차를 개시합니다...');
@@ -2681,15 +2747,15 @@ async function startServer() {
 // ▼▼▼▼▼ 바로 이 부분을 임시로 추가해주세요 ▼▼▼▼▼
 
 // ✨ '기억의 정원사' 수동 실행 테스트 코드
-//(async () => {
+(async () => {
     // 서버와 DB가 준비될 시간을 2초 정도 기다려줍니다. (안전장치)
-    //await new Promise(resolve => setTimeout(resolve, 2000)); 
+    await new Promise(resolve => setTimeout(resolve, 2000)); 
     
-    //console.log('[Manual Test] "기억의 정원사" 프로세스를 수동으로 실행합니다...');
-    // 우리가 테스트하고 싶은 함수를 여기서 직접 호출합니다.
-    //await runMemoryGardenerProcess();
-    //console.log('[Manual Test] 수동 실행이 완료되었습니다.');
-//})();
+    console.log('[Manual Test] "기억의 정원사" 프로세스를 수동으로 실행합니다...');
+     //우리가 테스트하고 싶은 함수를 여기서 직접 호출합니다.
+    await runMemoryGardenerProcess();
+    console.log('[Manual Test] 수동 실행이 완료되었습니다.');
+})();
 
 // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
