@@ -453,6 +453,32 @@ function getMemoriesForBrowser(filters = {}) {
     }
 }
 
+// 감정 히트맵 : 특정 기간의 감정 통계를 계산하는 함수
+function getEmotionStats(days = 7) { // 기본값으로 최근 7일을 설정
+    try {
+        // 'days' 변수를 사용하여 동적으로 기간을 설정합니다.
+        // '?' 플레이스홀더를 사용하여 SQL Injection 공격을 방지합니다.
+        const stmt = db.prepare(`
+            SELECT 
+                emotional_weight, 
+                COUNT(*) as count
+            FROM 
+                ai_reflections
+            WHERE 
+                entry_date >= date('now', '-' || ? || ' days')
+            GROUP BY 
+                emotional_weight
+            ORDER BY 
+                count DESC
+        `);
+        const stats = stmt.all(days);
+        return stats; // 예: [{ emotional_weight: '긍정', count: 5 }, ...]
+    } catch (error) {
+        console.error('[DB Manager] 감정 통계 계산 중 오류:', error.message);
+        return [];
+    }
+}
+
 // 성찰 로그 뷰어를 위한 데이터 조회 함수
 function getReflectionsForBrowser(filters = {}) {
     try {
@@ -499,5 +525,6 @@ module.exports = {
     saveCompressedMemory,        
     archiveMemories,
     getMemoriesForBrowser,
-    getReflectionsForBrowser  
+    getReflectionsForBrowser,
+    getEmotionStats  
 };

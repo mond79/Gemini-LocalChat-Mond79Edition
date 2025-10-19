@@ -188,7 +188,7 @@
             <div id="settings-page">
                 <div class="settings-page-header"><h1>설정</h1></div>
                 <div class="settings-page-layout">
-                    <nav class="settings-nav"><ul id="settings-tabs-list"><li><button class="tab-btn active" data-tab="tab-api">API 및 모델</button></li><li><button class="tab-btn" data-tab="tab-interface">인터페이스</button></li><li><button class="tab-btn" data-tab="tab-data">데이터 관리</button></li><li><button class="tab-btn" data-tab="tab-usage">API 사용량</button></li><li><button class="tab-btn" data-tab="tab-memory-browser">📚 기억 브라우저</button></li></ul></nav>
+                    <nav class="settings-nav"><ul id="settings-tabs-list"><li><button class="tab-btn active" data-tab="tab-api">API 및 모델</button></li><li><button class="tab-btn" data-tab="tab-interface">인터페이스</button></li><li><button class="tab-btn" data-tab="tab-data">데이터 관리</button></li><li><button class="tab-btn" data-tab="tab-usage">API 사용량</button></li><li><button class="tab-btn" data-tab="tab-memory-browser">📚 기억 브라우저</button></li><li><button class="tab-btn" data-tab="tab-luna-diary">📔 루나의 일기장</button></li></ul></nav>
                     <main class="settings-content">
                         <div id="tab-api" class="tab-content active">
                            <div class="settings-section"><div class="settings-group settings-group--default"><label for="api-key">기본 Gemini API Key</label><div class="api-input-wrapper"><input type="password" id="api-key" placeholder="기본 API 키를 입력하세요"><button id="validate-key-btn">API 키 검증</button></div></div><div id="validation-status" class="status-message"></div></div>
@@ -226,7 +226,7 @@
                                </div>
                            </div>
                         </div>
-                        <!-- ▼▼▼▼▼ 바로 여기에 새 탭의 콘텐츠 공간을 추가해주세요 ▼▼▼▼▼ -->
+                        
                         <div id="tab-memory-browser" class="tab-content">
                             <div class="settings-section">
                                 <h2 class="section-title">기억 탐색기</h2>
@@ -242,6 +242,37 @@
                                 </div>
                             </div>
                         </div>
+                        <!-- ▼▼▼▼▼ 바로 여기에 새 탭의 콘텐츠 공간을 추가해주세요 ▼▼▼▼▼ -->
+                        <div id="tab-luna-diary" class="tab-content">
+                            <div class="settings-section">
+                                <h2 class="section-title">📔 루나의 일기장</h2>
+                                <p class="section-description">최근 7일간 루나가 기록한 감정의 분포와 성장 기록을 보여줍니다.</p>
+
+                                <!-- ▼▼▼▼▼ 바로 이 부분을 아래 코드로 교체해주세요 ▼▼▼▼▼ -->
+
+                                <div id="emotion-section" style="margin-top: 15px;">
+                                    <!-- 1. 차트가 그려질 공간 -->
+                                    <div id="emotion-chart-container" style="height:280px; position: relative;">
+                                        <canvas id="emotion-chart"></canvas>
+                                    </div>
+
+                                    <!-- 2. 감성 인사이트 문장이 표시될 공간 -->
+                                    <div id="emotion-insight" style="text-align: center; margin-top: 10px;"></div>
+
+                                    <!-- 3. 커스텀 범례가 표시될 공간 -->
+                                    <div id="emotion-legend" style="margin-top: 15px;"></div>
+                                </div>
+                                
+                                <!-- 구분선 -->
+                                <hr style="border: 1px solid var(--border-color); margin: 30px 0;">
+
+                                <!-- 4. '하루 요약' 타임라인이 표시될 공간 -->
+                                <div class="settings-section">
+                                    <h2 class="section-title">🌱 루나의 성장 기록</h2>
+                                    <div id="reflection-timeline-container" style="margin-top: 15px;">
+                                        <p>일기를 불러오는 중...</p>
+                                    </div>
+                                </div>
                         
                     </main>
                 </div>

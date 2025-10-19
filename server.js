@@ -881,7 +881,7 @@ async function saveMemory(conversationHistory, chatId, genAI, mainModelName) {
         return;
     }
 
-    const preferredSummarizerModel = 'gemini-2.5-flash';
+    const preferredSummarizerModel = 'gemini-flash-lite-latest';
     const conversationText = conversationHistory
         .map(m => `${m.role}: ${m.parts.map(p => p.type === 'text' ? p.text : `(${p.type})`).join(' ')}`)
         .join('\n');
@@ -2356,7 +2356,7 @@ cron.schedule('0 3 * * *', async () => {
 // ✨ 9차 진화: '기억의 정원사' 핵심 로직
 async function runMemoryGardenerProcess() {
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-flash-lite-latest' });
     
     const allMemories = dbManager.getAllMemories();
 
@@ -2462,7 +2462,7 @@ async function runMemoryGardenerProcess() {
             let clusterName = `클러스터 ${i} (이름 생성 실패)`; // 기본 이름
             try {
                 // 1차 시도: Flash 모델
-                const flashModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+                const flashModel = genAI.getGenerativeModel({ model: 'gemini-flash-lite-latest' });
                 const nameResultFlash = await flashModel.generateContent(namingPrompt);
                 clusterName = nameResultFlash.response.text().trim().replace(/"/g, '');
             } catch (flashError) {
@@ -2513,7 +2513,7 @@ async function runMemoryGardenerProcess() {
             `;
             
             try {
-                const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+                const model = genAI.getGenerativeModel({ model: 'gemini-flash-lite-latest' });
                 const result = await model.generateContent(compressionPrompt);
                 const compressedSummary = result.response.text();
                 dbManager.saveCompressedMemory(cluster.id, compressedSummary, memoryIdsToArchive);
@@ -2612,6 +2612,38 @@ app.get('/api/unified-timeline', (req, res) => {
     }
 });
 
+// 감정 히트맵 : 감정 통계 데이터를 제공하는 API
+app.get('/api/emotion-stats', (req, res) => {
+    try {
+        // URL 쿼리에서 'days' 값을 가져옵니다 (예: /api/emotion-stats?days=30). 없으면 기본값 7을 사용합니다.
+        const days = req.query.days ? parseInt(req.query.days, 10) : 7;
+        
+        const stats = dbManager.getEmotionStats(days);
+
+        // 프론트엔드 Chart.js가 사용하기 좋은 형식으로 데이터를 가공합니다.
+        const chartData = {
+            labels: stats.map(s => s.emotional_weight),
+            data: stats.map(s => s.count)
+        };
+        
+        res.json(chartData);
+    } catch (error) {
+        console.error('[API /emotion-stats] 오류:', error);
+        res.status(500).json({ message: '감정 통계를 가져오는 중 오류가 발생했습니다.' });
+    }
+});
+
+// ✨ 12차 진화 (성장 일기): 성찰 기록 데이터를 제공하는 API
+app.get('/api/reflections', (req, res) => {
+    try {
+        // 이 함수는 이전에 우리가 이미 만들어 두었습니다.
+        const reflections = dbManager.getReflectionsForBrowser(req.query);
+        res.json(reflections);
+    } catch (error) {
+        console.error('[API /reflections] 오류:', error);
+        res.status(500).json({ message: '성찰 기록을 가져오는 중 오류가 발생했습니다.' });
+    }
+});
 // --- 7. 서버 실행 (가장 마지막에!) ---
 async function startServer() {
     console.log('[Server Startup] 서버 시작 절차를 개시합니다...');
@@ -2649,15 +2681,15 @@ async function startServer() {
 // ▼▼▼▼▼ 바로 이 부분을 임시로 추가해주세요 ▼▼▼▼▼
 
 // ✨ '기억의 정원사' 수동 실행 테스트 코드
-(async () => {
+//(async () => {
     // 서버와 DB가 준비될 시간을 2초 정도 기다려줍니다. (안전장치)
-    await new Promise(resolve => setTimeout(resolve, 2000)); 
+    //await new Promise(resolve => setTimeout(resolve, 2000)); 
     
-    console.log('[Manual Test] "기억의 정원사" 프로세스를 수동으로 실행합니다...');
+    //console.log('[Manual Test] "기억의 정원사" 프로세스를 수동으로 실행합니다...');
     // 우리가 테스트하고 싶은 함수를 여기서 직접 호출합니다.
-    await runMemoryGardenerProcess();
-    console.log('[Manual Test] 수동 실행이 완료되었습니다.');
-})();
+    //await runMemoryGardenerProcess();
+    //console.log('[Manual Test] 수동 실행이 완료되었습니다.');
+//})();
 
 // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 

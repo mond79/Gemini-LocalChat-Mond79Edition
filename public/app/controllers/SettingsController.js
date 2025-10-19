@@ -6,6 +6,7 @@ import { UsageReporter } from '../modules/settings/UsageReporter.js';
 import { GeneralSettings } from '../modules/settings/GeneralSettings.js';
 import { MemoryVisualizer } from '../modules/settings/MemoryVisualizer.js'; 
 import { MemoryBrowser } from '../modules/settings/MemoryBrowser.js'; 
+import { LunaDiary } from '../modules/settings/LunaDiary.js';
 
 let elements = {};
 let isInitialized = false;
@@ -28,19 +29,22 @@ function checkAndResetDailyUsage() {
 function handleTabClick(e) {
     const button = e.target.closest('.tab-btn');
     if (!button || button.classList.contains('active')) return;
+
     const targetTabId = button.dataset.tab;
     elements.tabButtons.forEach(btn => btn.classList.remove('active'));
     button.classList.add('active');
     elements.tabContents.forEach(content => content.classList.remove('active'));
     document.getElementById(targetTabId).classList.add('active');
+    
+    // 탭을 클릭했을 때, 해당 탭에 맞는 모듈의 render 함수를 호출합니다.
     if (targetTabId === 'tab-usage') {
         UsageReporter.render();
-    }
-    // '데이터 관리' 탭(tab-data)이 클릭되면, MemoryVisualizer를 실행하도록 추가합니다.
-    else if (targetTabId === 'tab-data') {
+    } else if (targetTabId === 'tab-data') {
         MemoryVisualizer.render();
-    } else if (targetTabId === 'tab-memory-browser') { 
+    } else if (targetTabId === 'tab-memory-browser') {
         MemoryBrowser.render();
+    } else if (targetTabId === 'tab-luna-diary') {
+        LunaDiary.render();
     }
 }
 
@@ -124,6 +128,8 @@ export const SettingsController = {
             MemoryVisualizer.render();
         } else if (activeTab === 'tab-memory-browser') { 
             MemoryBrowser.render();
+        } else if (activeTab === 'tab-luna-diary') { 
+                LunaDiary.render();
         }
 
         isInitialized = true;
@@ -133,13 +139,18 @@ export const SettingsController = {
         if (!isInitialized) this.init();
         ApiSettings.render();
         GeneralSettings.render();
+        
+        // 현재 활성화된 탭을 찾아서, 그 탭에 맞는 모듈의 render 함수를 호출합니다.
         const activeTab = document.querySelector('#settings-tabs-list .tab-btn.active')?.dataset.tab;
+        
         if (activeTab === 'tab-usage') {
             UsageReporter.render();
-        }
-        // 'render' 함수가 호출될 때도 데이터 탭이 활성화 상태이면 차트를 다시 그리도록 추가합니다.
-        else if (activeTab === 'tab-data') {
+        } else if (activeTab === 'tab-data') {
             MemoryVisualizer.render();
+        } else if (activeTab === 'tab-memory-browser') {
+            MemoryBrowser.render();
+        } else if (activeTab === 'tab-luna-diary') {
+            LunaDiary.render();
         }
     }
 };
