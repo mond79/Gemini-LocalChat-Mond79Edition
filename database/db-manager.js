@@ -154,8 +154,42 @@ function initializeDatabase() {
             low_day TEXT,
             summary_json TEXT,
             narrative TEXT,
+            goal_title TEXT,      
+            goal_desc TEXT,  
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+    `);
+
+    // (자율 루프) : 사용자 설정을 저장할 테이블
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS user_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        );
+    `);
+
+    // (자율 루프) : 모든 종류의 활동을 기록할 '범용 활동 기록부'
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS activity_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            activity_type TEXT NOT NULL, -- 예: 'study', 'fitness', 'music'
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            duration_minutes INTEGER,
+            notes TEXT,
+            meta_data TEXT -- JSON 형태의 추가 정보 (예: 공부 과목, 운동 종류)
+        );
+    `);
+
+    // ✨ (자율 루프) : 일일 활동을 요약하는 테이블
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS daily_activity_summary (
+            date TEXT PRIMARY KEY,
+            total_sessions INTEGER,
+            total_minutes INTEGER,
+            narrative TEXT,
+            activity_counts TEXT -- JSON 형태 (예: {"study": 3, "fitness": 1})
         );
     `);
 
@@ -580,7 +614,7 @@ function getDailySummaries() {
     } catch (e) { return []; }
 }
 
-// ✨ 12차 진화 (메타 성찰): '주간 메타 성찰'을 저장/업데이트하는 함수
+// (메타 성찰) : '주간 메타 성찰'을 저장/업데이트하는 함수
 function saveWeeklyMetaInsight(insight) {
     try {
         const stmt = db.prepare(`
@@ -605,10 +639,112 @@ function saveWeeklyMetaInsight(insight) {
     }
 }
 
-// ✨ 12차 진화 (메타 성찰): 가장 최신의 '주간 메타 성찰'을 가져오는 함수
+// (메타 성찰) : 가장 최신의 '주간 메타 성찰'을 가져오는 함수
 function getLatestWeeklyMetaInsight() {
     try {
         const stmt = db.prepare('SELECT * FROM weekly_meta_insights ORDER BY week_start DESC LIMIT 1');
+        return stmt.get();
+    } catch (e) { return null; }
+}
+
+// ✨ ----- 13차 진화 (자율 루프) 함수들 ----- ✨
+
+// -- 사용자 설정 (user_settings) 관련 --
+function getUserSetting(key, defaultValue = null) {
+    try {
+        const stmt = db.prepare('SELECT value FROM user_settings WHERE key = ?');
+        const row = stmt.get(key);
+        return row ? row.value : defaultValue;
+    } catch (e) { return defaultValue; }
+}
+
+function saveUserSetting(key, value) {
+    try {
+        const stmt = db.prepare(`
+            INSERT INTO user_settings (key, value) VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        `);
+        stmt.run(key, String(value));
+    } catch (error) {
+        console.error(`[DB Manager] 설정 저장 중 오류 (key: ${key}):`, error.message);
+    }
+}
+
+// -- 활동 기록 (activity_log) 관련 --
+function startActivityLog(activityType, notes = '', metaData = {}) {
+    try {
+        const startTime = new Date().toISOString();
+        const stmt = db.prepare(`
+            INSERT INTO activity_log (activity_type, started_at, notes, meta_data) 
+            VALUES (?, ?, ?, ?)
+        `);
+        const result = stmt.run(activityType, startTime, notes, JSON.stringify(metaData));
+        return result.lastInsertRowid; // 생성된 활동 로그의 고유 ID 반환
+    } catch (error) {
+        console.error(`[DB Manager] 활동 시작 기록 중 오류 (type: ${activityType}):`, error.message);
+        return null;
+    }
+}
+
+function finishActivityLog(logId) {
+    try {
+        const endTime = new Date();
+        const stmtSelect = db.prepare('SELECT started_at FROM activity_log WHERE id = ?');
+        const row = stmtSelect.get(logId);
+        if (!row) return null;
+
+        const startTime = new Date(row.started_at);
+        const durationMinutes = Math.round((endTime - startTime) / (1000 * 60));
+
+        const stmtUpdate = db.prepare('UPDATE activity_log SET ended_at = ?, duration_minutes = ? WHERE id = ?');
+        stmtUpdate.run(endTime.toISOString(), durationMinutes, logId);
+        
+        return { duration_minutes: durationMinutes };
+    } catch (error) {
+        console.error(`[DB Manager] 활동 종료 기록 중 오류 (ID: ${logId}):`, error.message);
+        return null;
+    }
+}
+
+// -- 일일 활동 요약 (daily_activity_summary) 관련 --
+// (이 함수들은 '기억의 정원사'가 자정에 사용할 것입니다)
+function getActivitiesByDate(dateStr) {
+    try {
+        const stmt = db.prepare(`
+            SELECT activity_type, duration_minutes, notes FROM activity_log
+            WHERE date(started_at) = ? AND duration_minutes IS NOT NULL
+        `);
+        return stmt.all(dateStr);
+    } catch (e) { return []; }
+}
+
+function saveDailyActivitySummary(summary) {
+    try {
+        const stmt = db.prepare(`
+            INSERT INTO daily_activity_summary (date, total_sessions, total_minutes, narrative, activity_counts)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(date) DO UPDATE SET
+                total_sessions = excluded.total_sessions,
+                total_minutes = excluded.total_minutes,
+                narrative = excluded.narrative,
+                activity_counts = excluded.activity_counts
+        `);
+        stmt.run(
+            summary.date, 
+            summary.totalSessions, 
+            summary.totalMinutes, 
+            summary.narrative,
+            JSON.stringify(summary.activityCounts)
+        );
+    } catch (error) {
+        console.error('[DB Manager] 일일 활동 요약 저장 중 오류:', error.message);
+    }
+}
+
+function getLatestWeeklyGoal() {
+    try {
+        // '주간 목표' 테이블에서 가장 최신 목표를 하나 가져옵니다.
+        const stmt = db.prepare('SELECT * FROM weekly_goals ORDER BY week_start DESC LIMIT 1');
         return stmt.get();
     } catch (e) { return null; }
 }
@@ -644,5 +780,12 @@ module.exports = {
     saveDailyNarrative,
     getDailySummaries,
     saveWeeklyMetaInsight,     
-    getLatestWeeklyMetaInsight  
+    getLatestWeeklyMetaInsight,
+    getUserSetting,
+    saveUserSetting,
+    startActivityLog,
+    finishActivityLog,
+    getActivitiesByDate,
+    saveDailyActivitySummary,
+    getLatestWeeklyGoal  
 };

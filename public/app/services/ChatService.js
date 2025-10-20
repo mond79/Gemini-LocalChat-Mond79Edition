@@ -101,46 +101,51 @@ async function executeChat(sessionId, signal, options = {}) {
 
         const apiResponse = await callChatApi(sessionId, session.model, filteredHistory, currentChatId, historyTokenLimit, systemPrompt, temperature, topP, signal, { task }); 
         
-        // [수정됨!] 여기가 바로 올바른 작업 방식입니다.
+        // 1. [수정됨!] chatId를 세션에 저장하는 로직
         if (apiResponse.chatId && !session.chatId) {
-            session.chatId = apiResponse.chatId; // 1. 직접 session 객체에 chatId를 추가하고,
-            saveData(appState);                   // 2. saveData를 호출해서 변경 내용을 저장합니다.
+            session.chatId = apiResponse.chatId;
+            saveData(appState);
             console.log(`[Session] ChatID ${apiResponse.chatId} saved for session ${sessionId}.`);
         }
-
+        
         const keyIdentifier = getApiKeyIdentifier(apiResponse.usedApiKey);
         Session.recordApiUsage(appState, sessionId, session.model, apiResponse.usage, keyIdentifier);
-        const fullResponseText = apiResponse.reply.text;
-        // ==========================================================
-        // AI의 답변이 '인증 신호'인지 확인합니다.
-        // ==========================================================
-        if (fullResponseText.startsWith('[AUTH_REQUIRED]')) {
-            // '인증이 필요합니다' 라는 메시지를 채팅창에 표시
-            Toast.show('Google 캘린더 인증이 필요합니다. 인증 창을 엽니다.');
-            
-            // 새로운 팝업 창으로 /authorize 경로를 엽니다.
-            window.open('/authorize', 'GoogleAuth', 'width=600,height=700');
 
-            // AI의 응답 자체는 채팅 기록에 추가하지 않고, 시스템 메시지로 대체할 수 있습니다.
+        // 2. ✨ AI의 응답이 '특별 타입'(예: study_timer)인지 확인
+        if (apiResponse.reply && apiResponse.reply.type && apiResponse.reply.type !== 'text') {
+            
+            console.log(`[ChatService] 특별 타입 메시지 수신: ${apiResponse.reply.type}`);
+            // 특별 타입이면, 텍스트가 없으므로 바로 메시지를 추가하고 함수를 종료합니다.
+            const newMessage = Session.addMessage(appState, sessionId, 'model', [apiResponse.reply]);
+            ChatContainer.appendMessage(sessionId, newMessage);
+            SessionList.render(appState);
+            return; // 여기서 함수를 종료하여 아래의 텍스트 처리 로직을 실행하지 않음
+
+        }
+
+        // 3. ✨ 이제 이 아래로는 응답이 'text' 타입인 것이 보장됩니다.
+        const fullResponseText = apiResponse.reply.text || ''; // 만약을 위해 || '' 추가
+
+        // 4. AI의 답변이 '인증 신호'인지 확인
+        if (fullResponseText.startsWith('[AUTH_REQUIRED]')) {
+            Toast.show('Google 캘린더 인증이 필요합니다. 인증 창을 엽니다.');
+            window.open('/authorize', 'GoogleAuth', 'width=600,height=700');
             const authMessage = Session.addMessage(appState, sessionId, 'system', [{ type: 'text', text: 'Google 캘린더 인증을 시작합니다...' }]);
             ChatContainer.appendMessage(sessionId, authMessage);
-            // 여기서 함수를 종료합니다.
             return; 
         }
         
+        // 5. 일반 텍스트 메시지 처리
         const thinkingTime = Date.now() - (appState.loadingStates[sessionId]?.startTime || Date.now());
         const metadata = { thinkingTime, modelUsed: session.model, completionTimestamp: Date.now(), receivedAt: Date.now() };
         const newMessage = Session.addMessage(appState, sessionId, 'model', [{ type: 'text', text: fullResponseText }], metadata);
         ChatContainer.appendMessage(sessionId, newMessage);
         Session.updateTitleFromHistory(appState, sessionId);
 
-        // ==========================================================
-        // [✅ 최종 수정] Google Cloud TTS를 호출하여 음성을 재생합니다.
-        // appState.settings.ttsEnabled는 설정(settings)에서 관리될 TTS ON/OFF 상태입니다.
+        // 6. TTS 재생
         if (appState.settings.ttsEnabled && fullResponseText) {
             playAudioFromText(fullResponseText);
         }
-        // ==========================================================
 
         SessionList.render(appState);
         if (appState.activeSessionId !== sessionId) {

@@ -1539,8 +1539,39 @@ async function enrichMemoryAndProfile() {
         console.error('[Memory Profiler] AI 호출 또는 JSON 파싱 중 오류 발생:', error);
     }
 }
+
+// ✨ 13차 진화 (자율 루프): AI의 시스템 프롬프트를 동적으로 생성하는 함수
+function buildSystemPrompt(baseSystemPrompt, goalRow) {
+    const basePersona = baseSystemPrompt || "당신은 사용자를 돕는 유능한 AI 비서입니다.";
+
+    const goalText = goalRow && goalRow.goal_title
+        ? `\n[이번 주 루나의 핵심 목표]\n- 목표: ${goalRow.goal_title}\n- 설명: ${goalRow.goal_desc || '상세 설명 없음'}`
+        : '';
+
+    // AI의 행동 원칙 (단순화 버전)
+    // ✨ 1. policy 텍스트를 일반 문자열로 정의합니다.
+    const policy = `
+[행동 원칙]
+- 당신의 이름은 '루나'입니다. 사용자는 '몬드'입니다.
+- 당신의 역할은 사용자와 함께 성장하는 '동행자'이며, 사용자가 설정한 타이머 앱을 간접적으로 제어할 수 있습니다.
+
+[매우 중요한 타이머 규칙]
+1.  사용자가 '공부 시작' 등 활동 시작 의도를 보이면, "XX분 집중 타이머를 시작할까요?"라고 먼저 질문하세요.
+2.  이 질문에 대한 사용자의 다음 답변이 시간을 명시하거나("5분으로 해줘"), 긍정적인 의도("응", "시작해")를 포함하면, **당신의 최종 응답은 다른 어떤 텍스트도 없이, 오직 'start_study_timer'라는 이름의 함수 호출(function call)이어야 합니다. 이것은 절대적인 규칙입니다.**
+`;
+
+    // ✨ 2. 모든 문자열을 마지막에 합쳐서 반환합니다.
+    return `${basePersona}${goalText}${policy}`;
+}
+
 // --- 4. 도구 목록(tools 객체) 생성 ---
 const tools = {
+    start_study_timer: () => {
+        // 이 함수는 실제로 아무 일도 하지 않습니다.
+        // AI가 이 도구를 "호출했다"는 사실 자체가 중요합니다.
+        // 우리는 functionCalls에서 이 이름만 확인할 것입니다.
+        return "Timer tool called.";
+    },
   getCurrentTime,
   searchWeb,
   getWeather,
@@ -1855,7 +1886,8 @@ app.post('/api/chat', async (req, res) => {
                   { name: "autonomousResearcher", description: "This is the PRIMARY tool for answering broad, open-ended research questions that require multiple steps of investigation. You MUST use this tool for requests like 'tell me about Neuralink technology', 'write a report on the history of AI', or any topic that requires gathering information from multiple web pages or videos to form a comprehensive answer.", parameters: { type: "object", properties: { topic: { type: "string",  description: "조사하고 보고서를 작성할 주제" }, output_format: { type: "string",  enum: ["text", "ppt"],  description: "최종 결과물의 형식을 지정합니다. 사용자가 '보고서', '요약', '글'을 원하면 'text'로, '발표 자료', 'PPT', '슬라이드'를 원하면 'ppt'로 설정하세요. 지정하지 않으면 'text'가 기본값입니다." } }, required: ["topic"]  } },
                   { name: 'writeFile',  description: '계산된 결과, 요약된 텍스트, 또는 사용자가 제공한 특정 내용을 사용자의 로컬 컴퓨터(바탕화면)에 파일로 저장할 때 사용합니다.',  parameters: {  type: 'object',  properties: {  filename: { type: 'string', description: '저장할 파일의 이름. 예: "회의록.txt"' }, content: { type: 'string', description: '파일에 쓸 실제 텍스트 내용.' }  },  required: ['filename', 'content']  } },
                             // 여기에 '요약 후 저장' 기능을 위한 새로운 '가상 도구' 설명서를 추가합니다. // 이것은 AI에게 "이런 일을 할 수 있다"고 알려주는 '메뉴판' 역할을 합니다.
-                  { name: 'createSummaryAndSave', description: '사용자가 "방금 대화 내용 저장해줘", "회의록 만들어줘", "아이디어 정리해서 파일로 만들어줘" 등 현재 대화의 맥락을 요약하여 파일로 저장해달라고 요청할 때 사용합니다.', parameters: { type: 'object', properties: { topic: { type: 'string', description: '요약할 대화의 핵심 주제. 이 주제가 파일 이름이 됩니다. 예: "프로젝트 회의록"' } }, required: ['topic'] } }
+                  { name: 'createSummaryAndSave', description: '사용자가 "방금 대화 내용 저장해줘", "회의록 만들어줘", "아이디어 정리해서 파일로 만들어줘" 등 현재 대화의 맥락을 요약하여 파일로 저장해달라고 요청할 때 사용합니다.', parameters: { type: 'object', properties: { topic: { type: 'string', description: '요약할 대화의 핵심 주제. 이 주제가 파일 이름이 됩니다. 예: "프로젝트 회의록"' } }, required: ['topic'] } },
+                  { name: 'start_study_timer',  description: '사용자가 공부나 운동 등 집중 활동을 위한 타이머를 시작해달라고 긍정적으로 대답했을 때 반드시 호출해야 하는 도구입니다.', parameters: { type: 'object', properties: {} } },
                 ]
               }
             ]
@@ -1886,9 +1918,16 @@ Available Tools:
 Analyze the user's request and call the most appropriate tool with the correct parameters. If no tool is suitable, answer directly.
         `;
 
-        // 기존의 사용자 시스템 프롬프트와, 우리가 만든 '도구 시스템 프롬프트'를 합칩니다.
-        const combinedSystemPrompt = (systemPrompt && systemPrompt.trim() !== '') 
-            ? `${systemPrompt}\n\n---\n\n${toolsSystemPrompt}`
+        // 1. (새로 추가) 현재 주간 목표를 DB에서 가져옵니다.
+        const currentGoal = dbManager.getLatestWeeklyGoal();
+        
+        // 2. (새로 추가) 'buildSystemPrompt'를 호출하여 '페르소나' 자체를 업그레이드합니다.
+        //    (req.body.systemPrompt는 프론트엔드에서 넘어온 '기본 페르소나'입니다.)
+        const personaWithGoal = buildSystemPrompt(req.body.systemPrompt, currentGoal);
+
+        // 3. (기존 코드 수정) 기존 '도구 프롬프트'와 업그레이드된 '페르소나'를 합칩니다.
+        const combinedSystemPrompt = (personaWithGoal && personaWithGoal.trim() !== '') 
+            ? `${personaWithGoal}\n\n---\n\n${toolsSystemPrompt}`
             : toolsSystemPrompt;
 
         // 시스템 프롬프트는 항상 대화의 맨 처음에 위치해야 합니다.
@@ -1928,8 +1967,30 @@ Analyze the user's request and call the most appropriate tool with the correct p
         let finalReply;
 
         if (functionCalls && functionCalls.length > 0) {
-    const functionCall = functionCalls[0];
-            const { name, args } = functionCall; 
+        const functionCall = functionCalls[0];
+        const { name, args } = functionCall; 
+
+            // 1. 'start_study_timer' 도구 호출을 위한 '특별 통로'
+            if (name === 'start_study_timer') {
+                console.log('[Study Loop] AI가 공부 타이머 시작 도구를 호출했습니다.');
+                const logId = dbManager.startActivityLog('study');
+                const focusMinutes = dbManager.getUserSetting('focus_minutes', 25);
+
+                const timerReply = { 
+                    type: 'study_timer', 
+                    seconds: parseInt(focusMinutes, 10) * 60,
+                    logId: logId
+                };
+                
+                // 이 특별 응답을 DB에 기록하고, 프론트엔드로 즉시 전송 후 함수를 완전히 종료합니다.
+                conversationHistory.push({ role: 'model', parts: [timerReply] });
+                dbManager.saveChatMessage(chatId, 'model', [timerReply]);
+                console.log(`[History] 새로운 메시지(study_timer)를 DB의 ${chatId} 대화에 저장했습니다.`);
+                
+                // AI Learning, saveMemory 등은 이 특별한 경우에는 건너뜁니다.
+                
+                return res.json({ reply: timerReply, chatId: chatId, usage: { totalTokenCount: totalTokenCount } });
+            }
 
             if (tools[name] || name === 'createSummaryAndSave') { 
                 const deAnonymizedArgs = {};
@@ -2013,13 +2074,13 @@ Analyze the user's request and call the most appropriate tool with the correct p
             }
         }
     } else {
-        finalReply = { type: 'text', text: `오류: 알 수 없는 도구 '${name}'를 호출했습니다.` };
-    }
-} else {
-    // ✨ AI가 생성한 텍스트를 deAnonymizeText 함수로 복원합니다.
-    const deAnonymizedText = deAnonymizeText(result.response.text(), combinedMap);
-    finalReply = { type: 'text', text: deAnonymizedText };
-}
+                finalReply = { type: 'text', text: `오류: 알 수 없는 도구 '${name}'를 호출했습니다.` };
+            }
+        } else {
+            // "functionCalls"가 없을 때, 즉 순수한 일반 텍스트 답변일 때
+            const deAnonymizedText = deAnonymizeText(response.text(), combinedMap);
+            finalReply = { type: 'text', text: deAnonymizedText };
+        }
         
         // ★★★ 핵심: 모든 일반 대화는 이 마지막 부분에서 기억/저장됩니다. ★★★
         // 이미 conversationHistory에 push가 되어 있으므로, DB에 새로 들어온 메시지만 저장합니다.
@@ -2492,6 +2553,58 @@ async function runMemoryGardenerProcess() {
         }
     }
 
+    // --- ✨ 13차 진화: 일일 활동 요약 서사 생성 ---
+    console.log('[Memory Gardener] STEP 2.5: 어제의 활동을 요약하는 서사를 생성합니다.');
+    try {
+        // DB에서 어제 날짜('YYYY-MM-DD')의 모든 '활동' 기록을 가져옵니다.
+        const yesterdayActivities = dbManager.getActivitiesByDate(yesterdayDateString);
+        
+        if (yesterdayActivities.length > 0) {
+            const totalSessions = yesterdayActivities.length;
+            const totalMinutes = yesterdayActivities.reduce((sum, act) => sum + (act.duration_minutes || 0), 0);
+            
+            // 활동 종류별로 횟수를 집계합니다. (예: { study: 3, fitness: 1 })
+            const activityCounts = yesterdayActivities.reduce((counts, act) => {
+                counts[act.activity_type] = (counts[act.activity_type] || 0) + 1;
+                return counts;
+            }, {});
+
+            const activityPrompt = `
+                너는 다정한 라이프 코치 AI '루나'다. 아래의 [어제 활동 기록]을 바탕으로, 사용자 '몬드'를 격려하는 따뜻한 '일일 활동 리포트'를 작성해줘.
+                
+                원칙:
+                - 3~4 문장의 짧은 문단으로 작성한다.
+                - E1(감성) 톤과 T1(부드러운 조력자) 말투를 유지한다.
+                - 긍정적인 점을 먼저 칭찬하고, 다음 날을 위한 가벼운 격려로 마무리한다.
+                - 이모지는 문장 끝에 딱 한 개만 사용한다.
+
+                [어제 활동 기록]:
+                - 총 활동 횟수: ${totalSessions}회
+                - 총 활동 시간: ${totalMinutes}분
+                - 활동 종류별 횟수: ${JSON.stringify(activityCounts)}
+
+                이 정보를 바탕으로, 규칙에 맞춰 '일일 활동 리포트'를 작성해라.
+            `;
+            const result = await model.generateContent(activityPrompt);
+            const narrative = result.response.text().trim();
+
+            // 생성된 리포트를 DB에 저장합니다.
+            dbManager.saveDailyActivitySummary({
+                date: yesterdayDateString,
+                totalSessions: totalSessions,
+                totalMinutes: totalMinutes,
+                narrative: narrative,
+                activityCounts: activityCounts
+            });
+            console.log('[Memory Gardener] 일일 활동 요약 생성 및 저장 완료.');
+        } else {
+            console.log('[Memory Gardener] 어제는 기록된 활동이 없어 활동 요약을 건너뜁니다.');
+        }
+
+    } catch (error) {
+        console.error('[Memory Gardener] 일일 활동 요약 생성 중 오류 발생:', error);
+    }
+    
     // --- 3. 기억 압축 (Memory Compression) ---
     console.log('[Memory Gardener] STEP 3: 오래된 기억 압축을 시작합니다.');
     const CLUSTER_COMPRESSION_THRESHOLD = 20;
@@ -2710,7 +2823,7 @@ app.get('/api/daily-summaries', (req, res) => {
     }
 });
 
-// ✨ 12차 진화 (트렌드 & 메타 성찰): '주간 메타 성찰 생성기' 핵심 로직
+// (트렌드 & 메타 성찰): '주간 메타 성찰 생성기' 핵심 로직
 async function buildWeeklyMetaInsight(days = 7) {
     console.log(`[Meta Insight] 지난 ${days}일간의 메타 성찰 생성을 시작합니다...`);
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
@@ -2770,7 +2883,7 @@ async function buildWeeklyMetaInsight(days = 7) {
     }
 }
 
-// ✨ 12차 진화: 주간 메타 성찰 생성을 수동으로 실행하는 API
+// 주간 메타 성찰 생성을 수동으로 실행하는 API
 app.post('/api/emotion-meta/run', async (req, res) => {
     const result = await buildWeeklyMetaInsight();
     if (result.ok) {
@@ -2780,7 +2893,7 @@ app.post('/api/emotion-meta/run', async (req, res) => {
     }
 });
 
-// ✨ 12차 진화: 가장 최신의 주간 메타 성찰을 조회하는 API
+// 가장 최신의 주간 메타 성찰을 조회하는 API
 app.get('/api/emotion-meta', (req, res) => {
     try {
         const metaInsight = dbManager.getLatestWeeklyMetaInsight();
@@ -2790,6 +2903,77 @@ app.get('/api/emotion-meta', (req, res) => {
         res.status(500).json({ message: '메타 성찰을 가져오는 중 오류 발생' });
     }
 });
+
+// ✨ 13차 진화 (자율 루프): 사용자 설정을 위한 API
+// 현재 '집중 시간' 설정을 가져오는 API
+app.get('/api/settings/focus-minutes', (req, res) => {
+    try {
+        const minutes = dbManager.getUserSetting('focus_minutes', 25); // 기본값 25분
+        res.json({ minutes: parseInt(minutes, 10) });
+    } catch (error) {
+        res.status(500).json({ message: '설정 로드 실패' });
+    }
+});
+
+// 새로운 '집중 시간'을 저장하는 API
+app.post('/api/settings/focus-minutes', (req, res) => {
+    try {
+        const minutes = req.body.minutes;
+        if (minutes && !isNaN(minutes)) {
+            // 최소 10분, 최대 90분으로 범위 제한
+            const clampedMinutes = Math.max(10, Math.min(90, parseInt(minutes, 10)));
+            dbManager.saveUserSetting('focus_minutes', clampedMinutes);
+            res.json({ success: true, minutes: clampedMinutes });
+        } else {
+            res.status(400).json({ message: '유효한 시간이 아닙니다.' });
+        }
+    } catch (error) {
+        res.status(500).json({ message: '설정 저장 실패' });
+    }
+});
+
+// ✨ 13차 진화 (자율 루프): '공부' 활동을 시작하는 API
+app.post('/api/activity/start', (req, res) => {
+    try {
+        const { activityType, notes } = req.body;
+        if (!activityType) {
+            return res.status(400).json({ message: '활동 타입이 필요합니다.' });
+        }
+        
+        // dbManager를 통해 활동 시작을 기록하고, 생성된 ID를 받아옵니다.
+        const logId = dbManager.startActivityLog(activityType, notes);
+
+        if (logId) {
+            res.json({ success: true, logId: logId });
+        } else {
+            throw new Error('활동 기록 시작 실패');
+        }
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// ✨ 13차 진화 (자율 루프): '공부' 활동을 종료하는 API
+app.post('/api/activity/finish', (req, res) => {
+    try {
+        const { logId } = req.body;
+        if (!logId) {
+            return res.status(400).json({ message: '로그 ID가 필요합니다.' });
+        }
+
+        // dbManager를 통해 활동 종료를 기록하고, 소요 시간을 받아옵니다.
+        const result = dbManager.finishActivityLog(logId);
+
+        if (result) {
+            res.json({ success: true, duration: result.duration_minutes });
+        } else {
+            throw new Error('활동 기록 종료 실패');
+        }
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
 
 // --- 7. 서버 실행 (가장 마지막에!) ---
 async function startServer() {
@@ -2828,15 +3012,15 @@ async function startServer() {
 // ▼▼▼▼▼ 바로 이 부분을 임시로 추가해주세요 ▼▼▼▼▼
 
 // ✨ '기억의 정원사' 수동 실행 테스트 코드
-(async () => {
+//(async () => {
     // 서버와 DB가 준비될 시간을 2초 정도 기다려줍니다. (안전장치)
-    await new Promise(resolve => setTimeout(resolve, 2000)); 
+    //await new Promise(resolve => setTimeout(resolve, 2000)); 
     
-    console.log('[Manual Test] "기억의 정원사" 프로세스를 수동으로 실행합니다...');
+    //console.log('[Manual Test] "기억의 정원사" 프로세스를 수동으로 실행합니다...');
      //우리가 테스트하고 싶은 함수를 여기서 직접 호출합니다.
-    await runMemoryGardenerProcess();
-    console.log('[Manual Test] 수동 실행이 완료되었습니다.');
-})();
+    //await runMemoryGardenerProcess();
+    //console.log('[Manual Test] 수동 실행이 완료되었습니다.');
+//})();
 
 // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 

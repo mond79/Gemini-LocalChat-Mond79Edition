@@ -104,6 +104,7 @@ export const SettingsController = {
             usageFilterGroup: document.getElementById('usage-filter-group'),
             chartsGrid: document.getElementById('usage-charts-grid'),
             usageDetails: document.querySelector('.usage-details'),
+            focusMinutesInput: document.getElementById('focus-minutes-input')
         };
         ApiSettings.init(appState, elements, this);
         UsageReporter.init(appState, elements, this);
@@ -132,13 +133,46 @@ export const SettingsController = {
                 LunaDiary.render();
         }
 
+        // ✨ '집중 시간' 입력창 이벤트 리스너
+        if (elements.focusMinutesInput) {
+            elements.focusMinutesInput.addEventListener('change', async (e) => {
+                const minutes = e.target.value;
+                try {
+                    const response = await fetch('/api/settings/focus-minutes', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ minutes: minutes })
+                    });
+                    const data = await response.json();
+                    if (data.success) {
+                        e.target.value = data.minutes; // 서버가 보정한 값으로 UI 업데이트
+                        console.log('집중 시간이 성공적으로 저장되었습니다:', data.minutes);
+                    }
+                } catch (error) {
+                    console.error('집중 시간 저장 실패:', error);
+                }
+            });
+        }
+
         isInitialized = true;
         console.log('SettingsController Initialized.');
     },
-    render() {
+    async render() {
         if (!isInitialized) this.init();
         ApiSettings.render();
         GeneralSettings.render();
+
+        // ✨ 2. 서버에서 현재 '집중 시간' 설정을 가져와 UI에 표시
+        if (elements.focusMinutesInput) {
+            try {
+                const response = await fetch('/api/settings/focus-minutes');
+                const data = await response.json();
+                elements.focusMinutesInput.value = data.minutes;
+            } catch (error) {
+                console.error('집중 시간 로드 실패:', error);
+                elements.focusMinutesInput.value = 25; // 로드 실패 시 기본값 25로 설정
+            }
+        }
         
         // 현재 활성화된 탭을 찾아서, 그 탭에 맞는 모듈의 render 함수를 호출합니다.
         const activeTab = document.querySelector('#settings-tabs-list .tab-btn.active')?.dataset.tab;
