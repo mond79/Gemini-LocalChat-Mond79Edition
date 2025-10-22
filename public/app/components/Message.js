@@ -39,6 +39,14 @@ function renderMessageParts(parts, role, receivedAt) {
                 if (part.text) {
                     partContent = createDOMElement('div', { className: 'text-part' });
                     let rawText = part.text;
+                    let videoId = null;
+
+                    // 1. ✨ 비밀 코드가 있는지 확인합니다.
+                    if (rawText.includes('||YT_VIDEO::')) {
+                        const segments = rawText.split('||YT_VIDEO::');
+                        rawText = segments[0]; // 앞부분은 순수 텍스트
+                        videoId = segments[1]; // 뒷부분은 비디오 ID
+                    }
 
                     // ✨ 안전장치 추가: rawText가 유효한 문자열일 때만 검문소 로직 실행
                     if (role === 'model' && typeof rawText === 'string' && (rawText.includes('구글 캘린더 연동하기') || rawText.includes('/authorize'))) {
@@ -50,9 +58,54 @@ function renderMessageParts(parts, role, receivedAt) {
                     const rawHtml = window.marked.parse(rawText);
                     const sanitizedHtml = window.DOMPurify.sanitize(rawHtml);
                     partContent.innerHTML = CodeBlock.enhance(sanitizedHtml);
+                // 3. ✨ 만약 비디오 ID가 있었다면, 텍스트 바로 다음에 플레이어를 추가합니다.
+                    if (videoId) {
+                        const playerContainer = createDOMElement('div', { className: 'youtube-player-container' });
+                        const playerId = `yt-player-${videoId}-${Date.now()}`;
+                        const playerDiv = createDOMElement('div', { id: playerId });
+                        playerContainer.appendChild(playerDiv);
+                        partContent.appendChild(playerContainer); // 텍스트 div의 자식으로 추가
+
+                        setTimeout(() => {
+                            if (window.YT && window.YT.Player) {
+                                new window.YT.Player(playerId, { videoId: videoId, width: '100%', playerVars: { 'playsinline': 1, 'autoplay': 0, 'rel': 0 } });
+                            }
+                        }, 100);
+                    }
                 }
                 break;
             
+            case 'youtube_video':
+                if (part.videoId) {
+                    // 1. 플레이어가 삽입될 컨테이너 div를 만듭니다.
+                    partContent = createDOMElement('div', { className: 'youtube-player-container' });
+                    
+                    // 2. 플레이어 div에 고유한 ID를 부여합니다. 이것이 매우 중요합니다.
+                    const playerId = `yt-player-${part.videoId}-${Date.now()}`;
+                    const playerDiv = createDOMElement('div', { id: playerId });
+                    partContent.appendChild(playerDiv);
+
+                    // 3. YouTube IFrame API가 준비되었는지 확인하고 플레이어를 생성합니다.
+                    //    API가 아직 로드되지 않았을 수 있으므로, 약간의 지연을 두고 실행하는 것이 안전합니다.
+                    setTimeout(() => {
+                        if (window.YT && window.YT.Player) {
+                            new window.YT.Player(playerId, {
+                                videoId: part.videoId,
+                                width: '100%',
+                                playerVars: {
+                                    'playsinline': 1,
+                                    'autoplay': 0, // 자동재생은 0으로 설정하는 것이 좋습니다.
+                                    'rel': 0 // 관련 동영상 표시 안함
+                                }
+                            });
+                        } else {
+                            console.error('YouTube IFrame Player API가 아직 준비되지 않았습니다.');
+                            // API 로드가 늦어질 경우를 대비해 재시도 로직을 추가할 수도 있습니다.
+                        }
+                    }, 100); // 0.1초 지연
+                }
+                break;
+
             case 'study_timer':
                 if (part.seconds) {
                     partContent = createDOMElement('div', { className: 'study-timer-container' });

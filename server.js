@@ -1573,6 +1573,15 @@ function buildSystemPrompt(baseSystemPrompt, goalRow) {
 
 // --- 4. 도구 목록(tools 객체) 생성 ---
 const tools = {
+
+    displayYoutubeVideo: ({ videoId }) => {
+        // 이 함수는 서버에서 특별한 로직을 실행하지 않습니다.
+        // AI가 이 함수를 "호출했다"는 사실 자체가 프론트엔드에 보낼 신호가 됩니다.
+        // 실제 영상 렌더링은 클라이언트(브라우저)의 역할입니다.
+        console.log(`[Tool Called] AI가 유튜브 영상 표시를 요청했습니다. Video ID: ${videoId}`);
+        return `[SYSTEM] YouTube video player signal will be sent to the client for video ID: ${videoId}.`;
+    },
+
     start_study_timer: () => {
         // 이 함수는 실제로 아무 일도 하지 않습니다.
         // AI가 이 도구를 "호출했다"는 사실 자체가 중요합니다.
@@ -1874,6 +1883,7 @@ app.post('/api/chat', async (req, res) => {
                   { name: 'searchWeb', description: '일반 검색(Fact Check)` 도구입니다. 사용자의 질문이 "OOO의 수도는?", "오늘 날씨 어때?", "OOO의 CEO는 누구야?" 와 같이 단일 사실 확인, 단순 정보 검색일 경우에만 사용하세요..', parameters: { type: 'object', properties: { query: { type: 'string', description: 'The search query' } }, required: ['query'] } },
                   { name: 'scrapeWebsite', description: '사용자가 제공한 특정 URL(웹사이트 링크)의 내용을 읽고 분석하거나 요약해야 할 때 사용합니다.', parameters: { type: 'object', properties: { url: { type: 'string', description: '내용을 읽어올 정확한 웹사이트 주소 (URL). 예: "https://..."' } }, required: ['url'] } },
                   { name: 'getYoutubeTranscript', description: '사용자가 "youtube.com" 또는 "youtu.be" 링크를 제공하며 영상의 내용을 요약하거나 분석해달라고 요청할 때 사용합니다.', parameters: { type: 'object', properties: { url: { type: 'string', description: '스크립트를 추출할 정확한 유튜브 영상 주소 (URL)' } }, required: ['url'] } },
+                  { name: 'displayYoutubeVideo', description: '사용자가 "영상 보여줘", "틀어줘", "재생해줘" 등 채팅창에서 직접 동영상을 보여달라고 명시적으로 요청했을 때 **반드시 사용해야 하는 최종 도구**입니다. 요약과 함께 요청하더라도, 요약 후 최종적으로 이 도구를 호출하여 영상을 화면에 표시해야 합니다.',  parameters: { type: 'object', properties: { videoId: { type: 'string', description: '재생할 YouTube 영상의 고유 ID. (예: "dQw4w9WgXcQ")' } }, required: ['videoId'] } },
                   { name: "recallUserProfile", description: "사용자가 '나에 대해 아는 것 말해줘', '내 프로필 요약해줘', '내가 누구야?' 등 AI가 자신에 대해 기억하는 모든 정보를 물어볼 때 사용합니다.", parameters: { type: 'object', properties: {} }},
                   { name: "rememberIdentity", description: "사용자가 자신의 이름이나 직업/역할에 대해 알려주며 기억해달라고 할 때 사용합니다. 예: '내 이름은 몬드야', '내 직업은 개발자야'", parameters: {  type: 'object',  properties: { key: { type: 'string', enum: ['name', 'role'], description: "기억할 정보의 종류. '이름'이면 'name', '직업'이나 '역할'이면 'role'입니다." }, value: { type: 'string', description: "기억할 실제 내용." } }, required: ["key", "value"] } },
                   { name: "rememberPreference", description: "사용자가 무언가를 '좋아한다' 또는 '싫어한다'고 명확하게 표현할 때 사용합니다. 예: '난 민트초코를 좋아해', '나는 오이를 싫어해'", parameters: {  type: 'object',  properties: { type: { type: 'string', enum: ['likes', 'dislikes'], description: "'좋아하면' 'likes', '싫어하면' 'dislikes'입니다." }, item: { type: 'string', description: "좋아하거나 싫어하는 대상." } }, required: ["type", "item"] }},
@@ -1977,6 +1987,24 @@ Analyze the user's request and call the most appropriate tool with the correct p
         const functionCall = functionCalls[0];
         const { name, args } = functionCall; 
 
+        // 'displayYoutubeVideo' 호출을 처리하는 특별 분기를 추가
+            if (name === 'displayYoutubeVideo') {
+                console.log('[YouTube Player] AI가 영상 재생 도구를 호출했습니다.');
+                
+                const videoReply = { 
+                    type: 'youtube_video', 
+                    videoId: args.videoId
+                };
+                
+                // 특별 응답을 DB에 기록하고, 프론트엔드로 즉시 전송 후 함수를 종료합니다.
+                conversationHistory.push({ role: 'model', parts: [videoReply] });
+                dbManager.saveChatMessage(chatId, 'model', [videoReply]);
+                console.log(`[History] 새로운 메시지(youtube_video)를 DB의 ${chatId} 대화에 저장했습니다.`);
+                
+                // 이 경우에는 추가적인 AI 학습이나 기억 저장을 건너뜁니다.
+                return res.json({ reply: videoReply, chatId: chatId, usage: { totalTokenCount: totalTokenCount } });
+            }
+
             // 1. 'start_study_timer' 도구 호출을 위한 '특별 통로'
             if (name === 'start_study_timer') {
                 console.log('[Study Loop] AI가 공부 타이머 시작 도구를 호출했습니다.');
@@ -2059,22 +2087,47 @@ Analyze the user's request and call the most appropriate tool with the correct p
                 }
             } 
             // 2-2. ★★★ 여기가 바로 빠졌던 핵심 부분입니다! ★★★
-            //      날씨, 캘린더 등 모든 '일반 도구'의 결과를 AI에게 보고하는 로직
             else {
-                // 유튜브 스크립트 추출 실패 시, 웹 스크래핑으로 자동 전환하는 예외 처리
-                if (name === 'getYoutubeTranscript' && functionResult.includes('자막을 찾을 수 없습니다')) {
-                    functionResult = await tools['scrapeWebsite'](args);
-                }
-                
-                // [보고서 작성] "AI 상사님, 'getWeather' 실행 결과는 '맑음, 25도' 입니다."
+                // ▼▼▼▼▼ [핵심 수정] 바로 이 블록 전체를 교체해주세요! ▼▼▼▼▼
+
+                // 1. (기존 로직) AI에게 도구 실행 결과를 보고합니다.
                 const functionResponse = { name: name, response: { name: name, content: functionResult } };
-                
-                // [보고] AI에게 보고서를 제출합니다.
                 secondResult = await chat.sendMessage([ { functionResponse: functionResponse } ]);
                 
-                // [최종 답변] 보고를 받은 AI 상사가 최종 답변을 생성합니다.
-                const deAnonymizedText = deAnonymizeText(secondResult.response.text(), combinedMap);
-                finalReply = { type: 'text', text: deAnonymizedText };
+                // 2. (기존 로직) AI가 최종 텍스트 답변을 생성합니다.
+                let summaryText = deAnonymizeText(secondResult.response.text(), combinedMap);
+
+                // 3. ✨ [새로운 검문 로직] '서버-사이드 증강'을 시작합니다!
+                // 만약 사용된 도구가 '유튜브 스크립트'였다면...
+                if (name === 'getYoutubeTranscript') {
+                    // 원본 사용자 메시지를 확인합니다.
+                    const lastUserText = conversationHistory.slice(-1)[0]?.parts.find(p => p.type === 'text')?.text || '';
+                    const showKeywords = ['보여줘', '틀어줘', '재생해줘', '보여 줘'];
+
+                    // 만약 원본 메시지에 '보여줘' 같은 키워드가 있었다면...
+                    if (showKeywords.some(keyword => lastUserText.includes(keyword))) {
+                        console.log('[Server Augmentation] 영상 표시 요청을 감지했습니다. 응답에 비디오 ID를 추가합니다.');
+                        
+                        // 유튜브 URL에서 비디오 ID를 추출하는 간단한 로직
+                        let videoId = '';
+                        const url = args.url; // 도구에 전달된 URL
+                        if (url.includes('youtu.be/')) {
+                            videoId = url.split('youtu.be/')[1].split('?')[0];
+                        } else if (url.includes('watch?v=')) {
+                            videoId = url.split('watch?v=')[1].split('&')[0];
+                        }
+
+                        // 만약 비디오 ID를 성공적으로 찾았다면...
+                        if (videoId) {
+                            // AI가 만든 요약 텍스트 뒤에 [비밀 코드 + 비디오 ID]를 붙입니다.
+                            summaryText += `||YT_VIDEO::${videoId}`;
+                        }
+                    }
+                }
+                
+                // 4. (기존 로직) 최종적으로 가공된 답변을 finalReply에 담습니다.
+                finalReply = { type: 'text', text: summaryText };
+
                 if (secondResult) {
                     totalTokenCount += secondResult.response.usageMetadata?.totalTokenCount || 0;
                 }

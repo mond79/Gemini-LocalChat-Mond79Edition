@@ -115,12 +115,14 @@ async function executeChat(sessionId, signal, options = {}) {
         if (apiResponse.reply && apiResponse.reply.type && apiResponse.reply.type !== 'text') {
             
             console.log(`[ChatService] 특별 타입 메시지 수신: ${apiResponse.reply.type}`);
-            // 특별 타입이면, 텍스트가 없으므로 바로 메시지를 추가하고 함수를 종료합니다.
             const newMessage = Session.addMessage(appState, sessionId, 'model', [apiResponse.reply]);
             ChatContainer.appendMessage(sessionId, newMessage);
             SessionList.render(appState);
-            return; // 여기서 함수를 종료하여 아래의 텍스트 처리 로직을 실행하지 않음
 
+            // ✨ 바로 이 부분이 핵심입니다! 애니메이션 종료 신호를 수동으로 보냅니다.
+            document.dispatchEvent(new CustomEvent('animation-complete', { detail: { sessionId } }));
+
+            return; 
         }
 
         // 3. ✨ 이제 이 아래로는 응답이 'text' 타입인 것이 보장됩니다.
