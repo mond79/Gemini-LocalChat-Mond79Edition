@@ -51,3 +51,7 @@ smartPatch_part2.js
 
 # 구글 이미지 생성
 my-ai-assistant-474519-020730560ddb.json
+
+# Local HTTPS Certificates
+localhost-key.pem
+localhost.pem

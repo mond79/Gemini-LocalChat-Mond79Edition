@@ -316,54 +316,27 @@ async function scrapeWebsite({ url }) {
 
 // [도구 6] 유튜브 스크립트 추출
 async function getYoutubeTranscript({ url }) {
-    console.log(`[YouTube] 스크립트 추출 시도: ${url}`);
+    console.log(`[YouTube] 파이썬 서버에 자막 추출을 요청합니다: ${url}`);
     try {
-        // [✅ 수정] 쿠키 동의 문제를 우회하기 위한 사전 작업
-        // 1. 먼저 axios를 사용해 유튜브 페이지에 접속하여 쿠키를 얻어옵니다.
-        const initialResponse = await axios.get(url, {
-            headers: {
-                // 실제 브라우저인 것처럼 위장합니다.
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
-            }
+        // 1. 우리 파이썬 서버의 새로운 엔드포인트로 POST 요청을 보냅니다.
+        const response = await axios.post('http://localhost:8001/youtube-transcript', {
+            url: url
         });
 
-        // 2. 응답 헤더에서 'set-cookie' 값을 추출합니다.
-        const cookies = initialResponse.headers['set-cookie']?.join('; ');
-
-        // [✅ 수정] YoutubeTranscript.fetchTranscript를 호출할 때, 얻어온 쿠키를 함께 전달합니다.
-        const transcript = await YoutubeTranscript.fetchTranscript(url, {
-            lang: 'ko', // 한국어 자막을 우선적으로 찾도록 설정
-            fetchOptions: {
-                headers: {
-                    'Cookie': cookies
-                }
-            }
-        });
-
-        if (!transcript || transcript.length === 0) {
-            return "죄송합니다, 이 영상의 자막을 찾을 수 없습니다. (자동 생성 자막이 없거나, 자막 기능이 비활성화된 영상일 수 있습니다.)";
+        // 2. 성공적으로 응답을 받으면, 'transcript' 텍스트를 반환합니다.
+        if (response.data && response.data.transcript) {
+            console.log(`[YouTube] 파이썬 서버로부터 자막 수신 성공! (길이: ${response.data.transcript.length})`);
+            return response.data.transcript;
+        } else {
+            throw new Error('파이썬 서버가 유효한 응답을 주지 않았습니다.');
         }
-
-        const fullText = transcript.map(item => item.text).join(' ');
-        const maxLength = 8000;
-        let summaryText = fullText;
-        if (fullText.length > maxLength) {
-            summaryText = fullText.substring(0, maxLength) + "... (영상이 너무 길어 일부 스크립트만 표시)";
-        }
-
-        console.log(`[YouTube] 스크립트 추출 성공. (길이: ${summaryText.length})`);
-        return `[유튜브 영상 스크립트: ${url}]\n\n${summaryText}`;
 
     } catch (error) {
-        console.error('유튜브 스크립트 추출 중 오류 발생:', error);
-        // 라이브러리가 던지는 오류 메시지를 좀 더 구체적으로 보여줍니다.
-        if (error.message.includes('subtitles are disabled')) {
-            return `죄송합니다, 이 영상은 자막 기능이 비활성화되어 있습니다.`;
-        }
-        if (error.message.includes('No transcripts')) {
-            return `죄송합니다, 이 영상에서 사용 가능한 자막을 찾지 못했습니다.`;
-        }
-        return `죄송합니다, 해당 유튜브 영상('${url}')의 스크립트를 가져오는 데 실패했습니다: ${error.message}`;
+        // 3. 파이썬 서버와 통신 중 오류가 발생한 경우
+        console.error('[YouTube] 파이썬 서버와 통신 중 오류 발생:', error.response ? error.response.data : error.message);
+        // 파이썬 서버가 보낸 오류 메시지를 그대로 사용자에게 전달합니다.
+        const detail = error.response?.data?.detail || error.message;
+        return `죄송합니다. 자막을 가져오는 데 실패했습니다. (원인: ${detail})`;
     }
 }
 
@@ -1883,7 +1856,7 @@ app.post('/api/chat', async (req, res) => {
                   { name: 'searchWeb', description: '일반 검색(Fact Check)` 도구입니다. 사용자의 질문이 "OOO의 수도는?", "오늘 날씨 어때?", "OOO의 CEO는 누구야?" 와 같이 단일 사실 확인, 단순 정보 검색일 경우에만 사용하세요..', parameters: { type: 'object', properties: { query: { type: 'string', description: 'The search query' } }, required: ['query'] } },
                   { name: 'scrapeWebsite', description: '사용자가 제공한 특정 URL(웹사이트 링크)의 내용을 읽고 분석하거나 요약해야 할 때 사용합니다.', parameters: { type: 'object', properties: { url: { type: 'string', description: '내용을 읽어올 정확한 웹사이트 주소 (URL). 예: "https://..."' } }, required: ['url'] } },
                   { name: 'getYoutubeTranscript', description: '사용자가 "youtube.com" 또는 "youtu.be" 링크를 제공하며 영상의 내용을 요약하거나 분석해달라고 요청할 때 사용합니다.', parameters: { type: 'object', properties: { url: { type: 'string', description: '스크립트를 추출할 정확한 유튜브 영상 주소 (URL)' } }, required: ['url'] } },
-                  { name: 'displayYoutubeVideo', description: '사용자가 "영상 보여줘", "틀어줘", "재생해줘" 등 채팅창에서 직접 동영상을 보여달라고 명시적으로 요청했을 때 **반드시 사용해야 하는 최종 도구**입니다. 요약과 함께 요청하더라도, 요약 후 최종적으로 이 도구를 호출하여 영상을 화면에 표시해야 합니다.',  parameters: { type: 'object', properties: { videoId: { type: 'string', description: '재생할 YouTube 영상의 고유 ID. (예: "dQw4w9WgXcQ")' } }, required: ['videoId'] } },
+                  { name: 'displayYoutubeVideo', description: '사용자가 "영상 보여줘", "틀어줘" 등 영상을 채팅창에 표시해달라고 요청했을 때 사용하는 최종 도구입니다. 이 도구를 호출하기 전에 사용자에게 재생 여부를 되물을 필요 없이, 즉시 호출하여 영상을 화면에 표시해야 합니다.',  parameters: { type: 'object', properties: { videoId: { type: 'string', description: '재생할 YouTube 영상의 고유 ID. (예: "dQw4w9WgXcQ")' } }, required: ['videoId'] } },
                   { name: "recallUserProfile", description: "사용자가 '나에 대해 아는 것 말해줘', '내 프로필 요약해줘', '내가 누구야?' 등 AI가 자신에 대해 기억하는 모든 정보를 물어볼 때 사용합니다.", parameters: { type: 'object', properties: {} }},
                   { name: "rememberIdentity", description: "사용자가 자신의 이름이나 직업/역할에 대해 알려주며 기억해달라고 할 때 사용합니다. 예: '내 이름은 몬드야', '내 직업은 개발자야'", parameters: {  type: 'object',  properties: { key: { type: 'string', enum: ['name', 'role'], description: "기억할 정보의 종류. '이름'이면 'name', '직업'이나 '역할'이면 'role'입니다." }, value: { type: 'string', description: "기억할 실제 내용." } }, required: ["key", "value"] } },
                   { name: "rememberPreference", description: "사용자가 무언가를 '좋아한다' 또는 '싫어한다'고 명확하게 표현할 때 사용합니다. 예: '난 민트초코를 좋아해', '나는 오이를 싫어해'", parameters: {  type: 'object',  properties: { type: { type: 'string', enum: ['likes', 'dislikes'], description: "'좋아하면' 'likes', '싫어하면' 'dislikes'입니다." }, item: { type: 'string', description: "좋아하거나 싫어하는 대상." } }, required: ["type", "item"] }},

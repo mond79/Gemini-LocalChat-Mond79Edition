@@ -9,10 +9,13 @@ import numpy as np
 from sklearn.cluster import KMeans
 import lancedb # LanceDB 라이브러리를 Python에서 사용
 import os
+import subprocess  
+import tempfile    
+import re          
 
 # --- 2. 설정 및 모델/DB 로드 ---
 MODEL_NAME = 'all-MiniLM-L6-v2'
-app = FastAPI(title="Local Vector AI Server", version="3.0.0")
+app = FastAPI(title="Local Vector AI Server", version="4.0.0")
 
 # --- LanceDB 설정 ---
 db_path = "./lancedb" # 프로젝트 루트에 lancedb 폴더 생성
@@ -82,6 +85,12 @@ class ClusteringRequest(BaseModel):
     num_clusters: int = 5
 class ClusteringResponse(BaseModel):
     labels: List[int]
+
+class YouTubeTranscriptRequest(BaseModel):
+    url: str
+
+class YouTubeTranscriptResponse(BaseModel):
+    transcript: str
 
 # --- 4. API 엔드포인트 생성 ---
 @app.post("/add", response_model=AddMemoryResponse)
@@ -155,6 +164,78 @@ async def run_clustering(request: ClusteringRequest):
 @app.get("/")
 def read_root():
     return {"status": "Local Embedding & Clustering Server is running", "model": MODEL_NAME if model else "Not loaded"}
+
+# // 유튜브 자막 추출을 위한 API 엔드포인트를 추가합니다.
+@app.post("/youtube-transcript", response_model=YouTubeTranscriptResponse)
+def get_youtube_transcript(request: YouTubeTranscriptRequest):
+    """
+    yt-dlp를 사용하여 유튜브 영상의 자동 생성 자막(한국어 우선)을 추출합니다.
+    """
+    video_url = request.url
+    print(f"INFO: (yt-dlp) 자막 추출 요청 수신: {video_url}")
+
+    # 1. 임시 디렉토리를 생성하여 자막 파일을 저장할 공간을 만듭니다.
+    with tempfile.TemporaryDirectory() as temp_dir:
+        output_template = os.path.join(temp_dir, "%(id)s.%(ext)s")
+        
+        # 2. yt-dlp 명령어 실행
+        command = [
+            'yt-dlp',
+            '--write-auto-subs',    # 자동 생성 자막 다운로드
+            '--sub-lang', 'ko',     # 한국어 자막 우선
+            '--skip-download',      # 영상 자체는 다운로드 안 함
+            '-o', output_template,  # 출력 파일 경로 지정
+            video_url
+        ]
+        
+        try:
+            print(f"INFO: (yt-dlp) 명령어 실행: {' '.join(command)}")
+            subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8')
+            
+            # 3. 다운로드된 자막 파일(.vtt)을 찾습니다.
+            downloaded_files = os.listdir(temp_dir)
+            vtt_file_path = None
+            for file in downloaded_files:
+                if file.endswith('.vtt'):
+                    vtt_file_path = os.path.join(temp_dir, file)
+                    break
+            
+            if not vtt_file_path:
+                raise FileNotFoundError("yt-dlp가 자막 파일을 생성하지 않았습니다. (자막이 없는 영상일 수 있습니다)")
+
+            # 4. vtt 파일을 읽고 파싱하여 순수 텍스트만 추출합니다.
+            with open(vtt_file_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            transcript_lines = []
+            for line in lines:
+                # 타임스탬프, WEBVTT 헤더, 빈 줄 등을 모두 제거합니다.
+                if '-->' not in line and 'WEBVTT' not in line and line.strip():
+                    # <...>, [...] 같은 태그를 제거하여 순수 텍스트만 남깁니다.
+                    cleaned_line = re.sub(r'<[^>]+>|\[[^\]]+\]', '', line).strip()
+                    if cleaned_line:
+                        transcript_lines.append(cleaned_line)
+            
+            # 중복된 라인을 제거하고 합칩니다.
+            unique_lines = []
+            for line in transcript_lines:
+                if not unique_lines or unique_lines[-1] != line:
+                    unique_lines.append(line)
+
+            full_transcript = " ".join(unique_lines)
+            print(f"INFO: (yt-dlp) 자막 추출 및 파싱 성공! (길이: {len(full_transcript)})")
+            
+            return {"transcript": full_transcript}
+
+        except subprocess.CalledProcessError as e:
+            print(f"ERROR: (yt-dlp) 실행 중 오류 발생: {e.stderr}")
+            raise HTTPException(status_code=500, detail=f"yt-dlp 실행 실패: {e.stderr}")
+        except FileNotFoundError as e:
+            print(f"ERROR: (yt-dlp) 자막 파일을 찾을 수 없음: {e}")
+            raise HTTPException(status_code=404, detail="이 영상의 자동 생성 자막을 찾을 수 없습니다.")
+        except Exception as e:
+            print(f"ERROR: (yt-dlp) 알 수 없는 오류: {e}")
+            raise HTTPException(status_code=500, detail=f"자막 처리 중 알 수 없는 오류 발생: {str(e)}")
 
 # 강제 동기화를 위한 '데이터베이스 재건축' API
 @app.post("/rebuild_db")
