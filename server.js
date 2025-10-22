@@ -158,37 +158,40 @@ function getCurrentTime() {
 async function searchWeb({ query }) {
     console.log(`[Function Executed] searchWeb 실행됨, 검색어: ${query}`);
     
-    // .env 파일에 SerpApi 키가 있는지 확인합니다.
     if (!SERPAPI_API_KEY) {
         console.error('[SerpApi] SERPAPI_API_KEY가 .env 파일에 설정되지 않았습니다.');
         return '웹 검색 기능이 설정되지 않았습니다. 서버 관리자에게 문의하세요.';
     }
 
-    // SerpApi에 요청을 보낼 주소(URL)를 만듭니다.
     const url = `https://serpapi.com/search.json?q=${encodeURIComponent(query)}&api_key=${SERPAPI_API_KEY}`;
 
     try {
-        // fetch를 사용해 SerpApi에 데이터를 요청합니다.
         const response = await fetch(url);
         if (!response.ok) {
             throw new Error(`SerpApi 요청 실패: ${response.statusText}`);
         }
         
-        // 응답받은 데이터를 JSON 형태로 변환합니다.
         const data = await response.json();
 
-        // 검색 결과에서 가장 중요한 부분을 추출합니다.
-        let resultText = "검색 결과를 찾았지만 요약할 만한 내용이 없습니다.";
+        let content = "검색 결과를 찾았지만 요약할 만한 내용이 없습니다.";
+        let sourceUrl = "#"; // 출처가 없을 경우를 대비한 기본값
+
+        // 가장 좋은 출처(answer_box)부터 확인
         if (data.answer_box && data.answer_box.snippet) {
-            resultText = data.answer_box.snippet;
-        } else if (data.answer_box && data.answer_box.answer) {
-             resultText = data.answer_box.answer;
-        } else if (data.organic_results && data.organic_results[0] && data.organic_results[0].snippet) {
-            resultText = data.organic_results[0].snippet;
+            content = data.answer_box.snippet;
+            sourceUrl = data.answer_box.link || (data.organic_results && data.organic_results[0]?.link);
+        } 
+        // 그 다음 좋은 출처(organic_results) 확인
+        else if (data.organic_results && data.organic_results[0]) {
+            content = data.organic_results[0].snippet;
+            sourceUrl = data.organic_results[0].link;
         }
         
-        console.log('[SerpApi] 검색 결과 요약:', resultText);
-        return `[웹 검색 결과] ${resultText}`;
+        // AI에게 전달할 최종 결과물을 '내용 + 출처' 형식으로 만듭니다.
+        const finalResult = `[내용: ${content}]\n[출처: ${sourceUrl}]`;
+
+        console.log('[SerpApi] 검색 결과 요약:', finalResult);
+        return finalResult; // <--- 내용과 출처가 함께 담긴 텍스트를 반환!
 
     } catch (error) {
         console.error('[SerpApi] 웹 검색 중 오류 발생:', error);
@@ -1391,19 +1394,23 @@ async function autonomousResearcher({ topic, output_format }, modelName) {
         // [텍스트 보고서 생성 로직]
         console.log(`[Autonomous Researcher] 6. Asking AI to synthesize the final TEXT report...`);
         const synthesisPrompt = `
-            당신은 뛰어난 요약 능력을 가진 AI입니다. 당신의 임무는 아래 제공된 다양한 출처의 조사 데이터를 종합하여, "${topic}"에 대한 하나의 명확하고 간결한 텍스트 요약 보고서를 작성하는 것입니다.
+            당신은 N개의 신뢰할 수 있는 웹 소스를 교차 분석하여, 질문에 대한 완벽한 답변을 생성하는 최고의 답변 엔진 AI '루나'입니다.
 
-            **핵심 지침:**
-            1.  **간결함:** 핵심 정보 위주로, 불필요한 내용은 과감히 생략하여 전체적인 길이를 짧게 유지하세요.
-            2.  **명확성:** 소제목이나 글머리 기호를 사용하여 정보를 명확하게 구분하고 가독성을 높이세요.
-            3.  **핵심 집중:** 모든 조사 결과를 망라하는 것이 아니라, "${topic}"의 가장 중요한 측면에 집중하여 요약하세요.
-            4.  **문체:** 전문적이고 정보 전달에 효과적인 문체를 사용하세요.
+            **[매우 중요한 절대 규칙]**
+            1.  당신의 모든 답변은 반드시 아래 제공된 [원본 조사 데이터]에 근거해야 합니다. 절대 상상해서 답변하면 안 됩니다.
+            2.  답변의 첫 문장은 반드시 **"'업그레이드 검색' 모듈을 통해 N개의 소스를 분석한 결과입니다."** 와 같은 형식으로 시작해야 합니다. (N은 실제 분석한 소스의 개수입니다.)
+            3.  답변의 각 문장이나 단락 끝에는, 그 내용의 근거가 된 정보 소스의 URL을 **\`[출처: URL]\`** 형식으로 명확하게 명시해야 합니다. 이것은 가장 중요한 규칙입니다.
 
-            --- 원본 조사 데이터 ---
+            **[답변 작성 가이드라인]**
+            1.  **명확성:** 독자가 이해하기 쉽도록 소제목이나 글머리 기호를 사용하여 정보를 명확하게 구분하고 가독성을 높여주세요.
+            2.  **핵심 집중:** "${topic}"이라는 주제의 가장 중요한 측면에 집중하여 요약하고, 불필요한 정보는 과감히 생략하세요.
+            3.  **문체:** 전문적이면서도 정보 전달에 효과적인 문체를 사용해주세요.
+
+            --- [원본 조사 데이터] ---
             ${researchData}
-            --- 데이터 끝 ---
+            --- [데이터 끝] ---
 
-            이제, 위 데이터를 바탕으로 "${topic}"에 대한 텍스트 요약 보고서를 한국어로 작성해주세요.
+            이제, 위의 **[매우 중요한 절대 규칙]**과 **[답변 작성 가이드라인]**을 모두 완벽하게 지켜서, "${topic}"에 대한 최종 답변을 한국어로 생성해주세요.
         `;
         
         const finalResult = await model.generateContent(synthesisPrompt);
@@ -1864,7 +1871,7 @@ app.post('/api/chat', async (req, res) => {
               {
                 functionDeclarations: [
                   { name: 'getCurrentTime', description: 'Get the current date and time.', parameters: { type: 'object', properties: {} } },
-                  { name: 'searchWeb', description: 'Search the web for a SINGLE, simple, factual query. Good for quick lookups like "who is the CEO of Tesla?" or "what is the weather in Seoul?". Do NOT use this for broad, open-ended topics that require deep research.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'The search query' } }, required: ['query'] } },
+                  { name: 'searchWeb', description: '일반 검색(Fact Check)` 도구입니다. 사용자의 질문이 "OOO의 수도는?", "오늘 날씨 어때?", "OOO의 CEO는 누구야?" 와 같이 단일 사실 확인, 단순 정보 검색일 경우에만 사용하세요..', parameters: { type: 'object', properties: { query: { type: 'string', description: 'The search query' } }, required: ['query'] } },
                   { name: 'scrapeWebsite', description: '사용자가 제공한 특정 URL(웹사이트 링크)의 내용을 읽고 분석하거나 요약해야 할 때 사용합니다.', parameters: { type: 'object', properties: { url: { type: 'string', description: '내용을 읽어올 정확한 웹사이트 주소 (URL). 예: "https://..."' } }, required: ['url'] } },
                   { name: 'getYoutubeTranscript', description: '사용자가 "youtube.com" 또는 "youtu.be" 링크를 제공하며 영상의 내용을 요약하거나 분석해달라고 요청할 때 사용합니다.', parameters: { type: 'object', properties: { url: { type: 'string', description: '스크립트를 추출할 정확한 유튜브 영상 주소 (URL)' } }, required: ['url'] } },
                   { name: "recallUserProfile", description: "사용자가 '나에 대해 아는 것 말해줘', '내 프로필 요약해줘', '내가 누구야?' 등 AI가 자신에 대해 기억하는 모든 정보를 물어볼 때 사용합니다.", parameters: { type: 'object', properties: {} }},
@@ -1883,7 +1890,7 @@ app.post('/api/chat', async (req, res) => {
                   { name: 'executeCommand', description: '사용자의 로컬 컴퓨터에서 직접 시스템 셸 명령어를 실행합니다. "메모장 열어줘" (notepad), "계산기 켜줘" (calc), 또는 "크롬으로 네이버 열어줘" (start chrome https://naver.com) 와 같은 요청에 사용됩니다.', parameters: { type: 'object', properties: {command: { type: 'string', description: '실행할 정확한 셸 명령어. 예: "notepad", "start chrome https://youtube.com"' } }, required: ['command'] } },
                   { name: 'executeMultipleCommands', description: '사용자가 "A하고 B해줘", "그리고 C도 해줘" 와 같이 한 번에 여러 개의 시스템 명령을 요청할 때 사용합니다. 모든 명령어를 분석하여 command 문자열의 배열(array) 형태로 만들어 한 번에 호출해야 합니다.', parameters: { type: 'object', properties: { commands: { type: 'array', description: '실행할 셸 명령어들의 목록. 예: ["notepad", "calc"]', items: { type: 'string' } } }, required: ['commands'] } },
                   { name: 'getDailyBriefing', description: '사용자가 "오늘의 브리핑", "하루 요약해줘" 등 아침 브리핑을 명시적으로 요청하거나, 브리핑을 시작하자는 제안에 "응", "네", "좋아", "시작해" 라고 긍정적으로 대답했을 때 사용합니다. 캘린더, 할 일, 뉴스를 종합하여 하루를 요약합니다.',  parameters: { type: 'object', properties: {} } },
-                  { name: "autonomousResearcher", description: "This is the PRIMARY tool for answering broad, open-ended research questions that require multiple steps of investigation. You MUST use this tool for requests like 'tell me about Neuralink technology', 'write a report on the history of AI', or any topic that requires gathering information from multiple web pages or videos to form a comprehensive answer.", parameters: { type: "object", properties: { topic: { type: "string",  description: "조사하고 보고서를 작성할 주제" }, output_format: { type: "string",  enum: ["text", "ppt"],  description: "최종 결과물의 형식을 지정합니다. 사용자가 '보고서', '요약', '글'을 원하면 'text'로, '발표 자료', 'PPT', '슬라이드'를 원하면 'ppt'로 설정하세요. 지정하지 않으면 'text'가 기본값입니다." } }, required: ["topic"]  } },
+                  { name: "autonomousResearcher", description: '`업그레이드 검색(Wide Search)` 도구입니다. 사용자의 질문이 "AI의 미래에 대해 알려줘", "새로운 음악 장르에 대해 보고서 써줘", "전기 자동차의 역사와 전망" 과 같이 여러 정보를 종합하고 분석해야 하는 광범위하고 복잡한 주제일 경우에 사용하세요.', parameters: { type: "object", properties: { topic: { type: "string",  description: "조사하고 보고서를 작성할 주제" }, output_format: { type: "string",  enum: ["text", "ppt"],  description: "최종 결과물의 형식을 지정합니다. 사용자가 '보고서', '요약', '글'을 원하면 'text'로, '발표 자료', 'PPT', '슬라이드'를 원하면 'ppt'로 설정하세요. 지정하지 않으면 'text'가 기본값입니다." } }, required: ["topic"]  } },
                   { name: 'writeFile',  description: '계산된 결과, 요약된 텍스트, 또는 사용자가 제공한 특정 내용을 사용자의 로컬 컴퓨터(바탕화면)에 파일로 저장할 때 사용합니다.',  parameters: {  type: 'object',  properties: {  filename: { type: 'string', description: '저장할 파일의 이름. 예: "회의록.txt"' }, content: { type: 'string', description: '파일에 쓸 실제 텍스트 내용.' }  },  required: ['filename', 'content']  } },
                             // 여기에 '요약 후 저장' 기능을 위한 새로운 '가상 도구' 설명서를 추가합니다. // 이것은 AI에게 "이런 일을 할 수 있다"고 알려주는 '메뉴판' 역할을 합니다.
                   { name: 'createSummaryAndSave', description: '사용자가 "방금 대화 내용 저장해줘", "회의록 만들어줘", "아이디어 정리해서 파일로 만들어줘" 등 현재 대화의 맥락을 요약하여 파일로 저장해달라고 요청할 때 사용합니다.', parameters: { type: 'object', properties: { topic: { type: 'string', description: '요약할 대화의 핵심 주제. 이 주제가 파일 이름이 됩니다. 예: "프로젝트 회의록"' } }, required: ['topic'] } },
