@@ -74,6 +74,65 @@ function renderMessageParts(parts, role, receivedAt) {
                     }
                 }
                 break;
+
+            case 'youtube_timeline':
+                if (part.data && part.data.videoId) {
+                    const timelineData = part.data;
+                    
+                    // 1. 전체를 감싸는 컨테이너를 만듭니다.
+                    partContent = createDOMElement('div', { className: 'timeline-container' });
+
+                    // 2. 유튜브 플레이어를 생성합니다.
+                    const playerContainer = createDOMElement('div', { className: 'youtube-player-container' });
+                    const playerId = `yt-player-${timelineData.videoId}-${Date.now()}`;
+                    const playerDiv = createDOMElement('div', { id: playerId });
+                    playerContainer.appendChild(playerDiv);
+                    partContent.appendChild(playerContainer);
+
+                    let player; // 나중에 타임라인 버튼에서 접근할 수 있도록 player 변수를 선언합니다.
+
+                    // YouTube IFrame API를 사용하여 플레이어를 로드합니다.
+                    setTimeout(() => {
+                        if (window.YT && window.YT.Player) {
+                            player = new window.YT.Player(playerId, {
+                                videoId: timelineData.videoId,
+                                width: '100%',
+                                playerVars: { 'playsinline': 1, 'autoplay': 0, 'rel': 0 }
+                            });
+                        }
+                    }, 100);
+
+                    // 3. 구간별 요약 타임라인을 생성합니다. (요약이 있을 경우에만)
+                    if (timelineData.summaries && timelineData.summaries.length > 0) {
+                        const segmentsContainer = createDOMElement('div', { className: 'timeline-segments-container' });
+                        
+                        timelineData.summaries.forEach(segment => {
+                            // 각 구간을 위한 버튼을 만듭니다.
+                            const segmentButton = createDOMElement('button', { 
+                                className: 'timeline-segment-button',
+                                'data-start-time': segment.start // 'data-' 속성에 시작 시간을 저장합니다.
+                            });
+                            
+                            // 시간(00:00)과 요약 텍스트를 버튼 안에 넣습니다.
+                            const time = new Date(segment.start * 1000).toISOString().substr(14, 5);
+                            segmentButton.innerHTML = `<span class="segment-time">${time}</span> <span class="segment-summary">${segment.summary}</span>`;
+                            
+                            // 버튼에 클릭 이벤트를 추가합니다!
+                            segmentButton.addEventListener('click', () => {
+                                if (player && player.seekTo) {
+                                    // 저장해둔 시작 시간으로 영상을 이동시키고 재생합니다.
+                                    player.seekTo(segment.start, true);
+                                    player.playVideo();
+                                }
+                            });
+                            
+                            segmentsContainer.appendChild(segmentButton);
+                        });
+                        
+                        partContent.appendChild(segmentsContainer);
+                    }
+                }
+                break;
             
             case 'youtube_video':
                 if (part.videoId) {

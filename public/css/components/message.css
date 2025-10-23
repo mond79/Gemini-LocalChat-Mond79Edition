@@ -133,3 +133,53 @@ textarea.edit-textarea { width: 100%; box-sizing: border-box; padding: 10px 15px
     height: 100%;
     border: none;
 }
+
+/* --- YouTube Timeline UI Styles --- */
+
+.timeline-container {
+    margin-top: 12px;
+    margin-bottom: 12px;
+    max-width: 560px; /* 플레이어와 너비를 맞춥니다. */
+    width: 100%;
+}
+
+.timeline-segments-container {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px; /* 각 구간 사이의 간격 */
+}
+
+.timeline-segment-button {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--border-color);
+    background-color: var(--background-color-secondary);
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+    font-size: 0.9em;
+    transition: background-color 0.2s, border-color 0.2s;
+}
+
+.timeline-segment-button:hover {
+    background-color: var(--hover-color);
+    border-color: var(--primary-color);
+}
+
+.segment-time {
+    font-weight: bold;
+    color: var(--primary-color);
+    margin-right: 12px;
+    font-variant-numeric: tabular-nums; /* 숫자가 같은 폭을 갖도록 설정 */
+}
+
+.segment-summary {
+    color: var(--text-color-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis; /* 요약이 길 경우 ...으로 표시 */
+}

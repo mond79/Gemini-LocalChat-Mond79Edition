@@ -1,17 +1,20 @@
 # --- 1. 필요한 라이브러리 불러오기 ---
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 import uvicorn
 import torch
-from typing import List, Dict
+from typing import List
 import numpy as np
 from sklearn.cluster import KMeans
-import lancedb # LanceDB 라이브러리를 Python에서 사용
+import lancedb
 import os
-import subprocess  
-import tempfile    
-import re          
+import subprocess
+import tempfile
+import re
+from urllib.parse import urlparse, parse_qs
+import webvtt
+from io import StringIO
 
 # --- 2. 설정 및 모델/DB 로드 ---
 MODEL_NAME = 'all-MiniLM-L6-v2'
@@ -92,6 +95,19 @@ class YouTubeTranscriptRequest(BaseModel):
 class YouTubeTranscriptResponse(BaseModel):
     transcript: str
 
+# ▼▼▼ [개선] 명시적인 응답 모델을 정의합니다. (ChatGPT 제안 3) ▼▼▼
+class TranscriptSegment(BaseModel):
+    start: float
+    end: float
+    text: str
+
+class TranscriptResponse(BaseModel):
+    video_id: str
+    segments: List[TranscriptSegment]
+
+class YouTubeTranscriptRequest(BaseModel):
+    url: str
+
 # --- 4. API 엔드포인트 생성 ---
 @app.post("/add", response_model=AddMemoryResponse)
 async def add_memory(request: AddMemoryRequest):
@@ -166,76 +182,96 @@ def read_root():
     return {"status": "Local Embedding & Clustering Server is running", "model": MODEL_NAME if model else "Not loaded"}
 
 # // 유튜브 자막 추출을 위한 API 엔드포인트를 추가합니다.
-@app.post("/youtube-transcript", response_model=YouTubeTranscriptResponse)
+@app.post("/youtube-transcript", response_model=TranscriptResponse)
 def get_youtube_transcript(request: YouTubeTranscriptRequest):
-    """
-    yt-dlp를 사용하여 유튜브 영상의 자동 생성 자막(한국어 우선)을 추출합니다.
-    """
-    video_url = request.url
-    print(f"INFO: (yt-dlp) 자막 추출 요청 수신: {video_url}")
-
-    # 1. 임시 디렉토리를 생성하여 자막 파일을 저장할 공간을 만듭니다.
+    raw_url = request.url
+    
+    # 1. URL 정규화
+    try:
+        parsed_url = urlparse(raw_url)
+        video_id = None
+        if 'youtube.com' in parsed_url.netloc:
+            query_params = parse_qs(parsed_url.query)
+            if 'v' in query_params: video_id = query_params['v'][0]
+            elif parsed_url.path.startswith('/shorts/'): video_id = parsed_url.path.split('/shorts/')[1]
+        elif 'youtu.be' in parsed_url.netloc:
+            video_id = parsed_url.path.lstrip('/')
+        if not video_id: raise ValueError("URL에서 비디오 ID를 추출할 수 없습니다.")
+        clean_url = f"https://www.youtube.com/watch?v={video_id}"
+        print(f"INFO: (URL 정규화) 원본: {raw_url} -> 정제: {clean_url}")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"유효하지 않은 URL입니다: {str(e)}")
+    video_url = clean_url
+    
+    # 2. 임시 디렉토리에서 자막 추출
     with tempfile.TemporaryDirectory() as temp_dir:
-        output_template = os.path.join(temp_dir, "%(id)s.%(ext)s")
-        
-        # 2. yt-dlp 명령어 실행
-        command = [
-            'yt-dlp',
-            '--write-auto-subs',    # 자동 생성 자막 다운로드
-            '--sub-lang', 'ko',     # 한국어 자막 우선
-            '--skip-download',      # 영상 자체는 다운로드 안 함
-            '-o', output_template,  # 출력 파일 경로 지정
-            video_url
-        ]
-        
+        vtt_file_path = None
         try:
-            print(f"INFO: (yt-dlp) 명령어 실행: {' '.join(command)}")
-            subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8')
+            print("INFO: (yt-dlp) 안정화 모드로 자막 추출을 시도합니다.")
             
-            # 3. 다운로드된 자막 파일(.vtt)을 찾습니다.
+            # ▼▼▼ [핵심 개선] 쿨다운 옵션을 추가하고, 플랜 A/B를 통합합니다. ▼▼▼
+            command = [
+                'yt-dlp',
+                # '--write-subs', '--write-auto-subs'를 통합하는 가장 좋은 방법은
+                # 자막이 존재하면 어떤 종류든 쓰도록 하는 것입니다.
+                '--write-sub', '--write-automatic-sub',
+                '--sub-lang', 'ko,en',
+                '--skip-download',
+                '--sub-format', 'vtt',
+                '--output', os.path.join(temp_dir, '%(id)s.%(ext)s'),
+                # [쿨다운 옵션] 유튜브의 요청 제한(429)을 피하기 위한 설정
+                '--sleep-interval', '2',
+                '--max-sleep-interval', '5',
+                video_url
+            ]
+            
+            result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8')
+            
+            # 디버깅을 위해 stderr(에러 로그)를 항상 확인합니다.
+            if result.stderr:
+                print(f"DEBUG: (yt-dlp) STDERR: {result.stderr[:500]}")
+
+            # ▼▼▼ [핵심 개선] "하나라도 성공하면 OK" 로직 ▼▼▼
             downloaded_files = os.listdir(temp_dir)
-            vtt_file_path = None
-            for file in downloaded_files:
-                if file.endswith('.vtt'):
-                    vtt_file_path = os.path.join(temp_dir, file)
-                    break
+            found_subs = [f for f in downloaded_files if f.endswith('.vtt')]
             
-            if not vtt_file_path:
-                raise FileNotFoundError("yt-dlp가 자막 파일을 생성하지 않았습니다. (자막이 없는 영상일 수 있습니다)")
+            if not found_subs:
+                # 어떤 자막 파일도 생성되지 않았다면, 그때가 진짜 실패입니다.
+                raise FileNotFoundError("yt-dlp가 어떤 자막 파일도 생성하지 않았습니다.")
+            
+            # 한국어 자막(.ko.vtt)이 있으면 최우선으로 선택합니다.
+            korean_subs = [f for f in found_subs if '.ko.vtt' in f]
+            if korean_subs:
+                vtt_file_path = os.path.join(temp_dir, korean_subs[0])
+                print(f"INFO: (yt-dlp) 한국어 자막 '{korean_subs[0]}'을 선택했습니다.")
+            else:
+                # 한국어 자막이 없으면, 찾은 것 중 아무거나 첫 번째 것을 사용합니다.
+                vtt_file_path = os.path.join(temp_dir, found_subs[0])
+                print(f"WARN: (yt-dlp) 한국어 자막을 찾을 수 없어, 사용 가능한 자막 '{found_subs[0]}'을 대신 사용합니다.")
 
-            # 4. vtt 파일을 읽고 파싱하여 순수 텍스트만 추출합니다.
-            with open(vtt_file_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-            
-            transcript_lines = []
-            for line in lines:
-                # 타임스탬프, WEBVTT 헤더, 빈 줄 등을 모두 제거합니다.
-                if '-->' not in line and 'WEBVTT' not in line and line.strip():
-                    # <...>, [...] 같은 태그를 제거하여 순수 텍스트만 남깁니다.
-                    cleaned_line = re.sub(r'<[^>]+>|\[[^\]]+\]', '', line).strip()
-                    if cleaned_line:
-                        transcript_lines.append(cleaned_line)
-            
-            # 중복된 라인을 제거하고 합칩니다.
-            unique_lines = []
-            for line in transcript_lines:
-                if not unique_lines or unique_lines[-1] != line:
-                    unique_lines.append(line)
-
-            full_transcript = " ".join(unique_lines)
-            print(f"INFO: (yt-dlp) 자막 추출 및 파싱 성공! (길이: {len(full_transcript)})")
-            
-            return {"transcript": full_transcript}
-
-        except subprocess.CalledProcessError as e:
-            print(f"ERROR: (yt-dlp) 실행 중 오류 발생: {e.stderr}")
-            raise HTTPException(status_code=500, detail=f"yt-dlp 실행 실패: {e.stderr}")
-        except FileNotFoundError as e:
-            print(f"ERROR: (yt-dlp) 자막 파일을 찾을 수 없음: {e}")
-            raise HTTPException(status_code=404, detail="이 영상의 자동 생성 자막을 찾을 수 없습니다.")
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            error_message = e.stderr if hasattr(e, 'stderr') else str(e)
+            raise HTTPException(status_code=404, detail=f"이 영상의 자막 데이터를 찾을 수 없습니다: {error_message}")
+        
+        # 3. VTT 파일 파싱
+        try:
+            with open(vtt_file_path, 'r', encoding='utf-8') as f: vtt_content = f.read()
+            vtt_content = re.sub(r'(WEBVTT\s*?\n)+', 'WEBVTT\n', vtt_content.strip())
+            try:
+                captions = webvtt.read_buffer(StringIO(vtt_content))
+            except Exception: # 더 넓은 범위의 파싱 에러를 잡습니다.
+                print("WARN: (VTT 파싱) 기본 파싱 실패, UTF-8-SIG 인코딩으로 재시도.")
+                captions = webvtt.read_buffer(StringIO(vtt_content.encode('utf-8-sig').decode('utf-8')))
+            segments = []
+            for caption in captions:
+                # `&gt;&gt;` 같은 HTML 엔티티를 실제 문자로 변환하고, 불필요한 공백을 정리합니다.
+                clean_text = caption.text.replace('&gt;&gt;', '').strip().replace('\n', ' ')
+                if clean_text: # 텍스트가 있는 경우에만 추가
+                    segments.append({ "start": caption.start_in_seconds, "end": caption.end_in_seconds, "text": clean_text })
+            print(f"INFO: (yt-dlp) 자막 파싱 성공! {len(segments)}개의 세그먼트를 추출했습니다.")
+            return { "video_id": video_id, "segments": segments }
         except Exception as e:
-            print(f"ERROR: (yt-dlp) 알 수 없는 오류: {e}")
-            raise HTTPException(status_code=500, detail=f"자막 처리 중 알 수 없는 오류 발생: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"추출된 자막 파일을 처리하는 중 오류: {str(e)}")
 
 # 강제 동기화를 위한 '데이터베이스 재건축' API
 @app.post("/rebuild_db")

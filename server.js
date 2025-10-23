@@ -318,17 +318,21 @@ async function scrapeWebsite({ url }) {
 async function getYoutubeTranscript({ url }) {
     console.log(`[YouTube] 파이썬 서버에 자막 추출을 요청합니다: ${url}`);
     try {
-        // 1. 우리 파이썬 서버의 새로운 엔드포인트로 POST 요청을 보냅니다.
         const response = await axios.post('http://localhost:8001/youtube-transcript', {
             url: url
+        }, {
+            // 아무리 큰 JSON 데이터라도 문제없이 받도록 용량 제한을 해제합니다.
+            maxContentLength: Infinity,
+            maxBodyLength: Infinity
         });
-
-        // 2. 성공적으로 응답을 받으면, 'transcript' 텍스트를 반환합니다.
-        if (response.data && response.data.transcript) {
-            console.log(`[YouTube] 파이썬 서버로부터 자막 수신 성공! (길이: ${response.data.transcript.length})`);
-            return response.data.transcript;
+        
+        // 이제부터는 response.data가 비어있지 않을 것입니다.
+        if (response.data && response.data.segments) { // segments가 있는지 더 명확하게 확인
+            console.log(`[YouTube] 파이썬 서버로부터 자막 수신 성공! (세그먼트 수: ${response.data.segments.length})`);
+            // 파이썬 서버가 보낸 데이터 전체를 그대로 반환합니다.
+            return response.data; 
         } else {
-            throw new Error('파이썬 서버가 유효한 응답을 주지 않았습니다.');
+            throw new Error('파이썬 서버가 유효한 자막 데이터를 반환하지 않았습니다.');
         }
 
     } catch (error) {
@@ -337,6 +341,89 @@ async function getYoutubeTranscript({ url }) {
         // 파이썬 서버가 보낸 오류 메시지를 그대로 사용자에게 전달합니다.
         const detail = error.response?.data?.detail || error.message;
         return `죄송합니다. 자막을 가져오는 데 실패했습니다. (원인: ${detail})`;
+    }
+}
+
+async function youtubeVideoAssistant({ query, summarize = true, display = true }) {
+    console.log(`[Timeline Engine] 타임라인 요약 시작. 검색어: "${query}"`);
+
+    try {
+        // 1. [함수 호출] getYoutubeTranscript 함수를 통해 구조화된 자막 데이터를 가져옵니다.
+        console.log('[Timeline Engine] Step 1: getYoutubeTranscript 함수를 통해 자막 데이터를 요청합니다.');
+        
+        // 사용자가 직접 URL을 입력한 경우와 검색어를 입력한 경우를 모두 처리합니다.
+        const urlToProcess = (query.startsWith('http')) ? query : query; // 검색어에는 ' youtube'를 붙이지 않습니다. getYoutubeTranscript가 내부적으로 처리할 수 있습니다.
+        
+        const transcriptData = await getYoutubeTranscript({ url: urlToProcess });
+
+        // transcriptData는 이제 { video_id, segments, message } 형태의 객체입니다.
+        const { video_id, segments, message } = transcriptData;
+
+        if (!segments || segments.length === 0) {
+            return "이 영상은 요약할 자막 데이터가 없습니다.";
+        }
+        console.log(`[Timeline Engine] Step 1 성공: ${segments.length}개의 자막 세그먼트를 받았습니다.`);
+
+        let finalResultPayload = {
+            videoId: video_id,
+            summaries: []
+        };
+        
+        // 2. 사용자가 요약을 원할 경우에만 요약 작업을 진행합니다.
+        if (summarize) {
+            // [데이터 전처리] AI에게 보내기 좋게, 30초 단위로 자막을 합칩니다. (Chunking)
+            console.log('[Timeline Engine] Step 2: 자막 데이터를 30초 단위 청크로 그룹화합니다.');
+            const CHUNK_DURATION = 30;
+            const chunks = [];
+            let currentChunk = null;
+
+            for (const segment of segments) {
+                if (!currentChunk) {
+                    currentChunk = { start: segment.start, text: '' };
+                }
+                currentChunk.text += segment.text + ' ';
+
+                if (segment.end - currentChunk.start >= CHUNK_DURATION) {
+                    chunks.push(currentChunk);
+                    currentChunk = null;
+                }
+            }
+            if (currentChunk && currentChunk.text.trim()) {
+                chunks.push(currentChunk);
+            }
+            console.log(`[Timeline Engine] Step 2 성공: ${chunks.length}개의 요약할 청크를 만들었습니다.`);
+
+            // [AI 요약 루프] 각 청크를 AI에게 보내 '한 줄 요약'을 받아옵니다.
+            console.log('[Timeline Engine] Step 3: 각 청크를 Gemini API에 보내 요약을 요청합니다.');
+            const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+            const model = genAI.getGenerativeModel({ model: 'gemini-flash-lite-latest' });
+
+            const summaryPromises = chunks.map(async (chunk) => {
+                const prompt = `다음 텍스트는 특정 영상의 일부 장면입니다. 이 장면의 핵심 내용을 한 문장으로 간결하게 요약해줘:\n\n"${chunk.text}"`;
+                try {
+                    const result = await model.generateContent(prompt);
+                    const summary = result.response.text().trim().replace(/"/g, '');
+                    return { start: Math.floor(chunk.start), summary: summary };
+                } catch (e) {
+                    return { start: Math.floor(chunk.start), summary: "(요약 실패)" };
+                }
+            });
+            
+            finalResultPayload.summaries = await Promise.all(summaryPromises);
+            console.log('[Timeline Engine] Step 3 성공: 모든 청크 요약을 완료했습니다.');
+        } else {
+            // 요약을 원하지 않을 경우, 빈 summaries 배열을 보냅니다.
+            console.log('[Timeline Engine] 요약 단계는 건너뛰었습니다.');
+        }
+
+        // 4. [최종 결과 조합] 프론트엔드에 보낼 최종 결과물을 만듭니다.
+        // 이 특별한 형식의 문자열은 나중에 /api/chat 핸들러가 가로채서 처리할 것입니다.
+        return `[TIMELINE_DATA]:::${JSON.stringify(finalResultPayload)}`;
+
+    } catch (error) {
+        const detail = error.response?.data?.detail || error.message;
+        console.error(`[Timeline Engine] 타임라인 생성 중 심각한 오류 발생: ${detail}`);
+        return `죄송합니다, 영상 타임라인을 생성하는 중 오류가 발생했습니다: ${detail}`;
     }
 }
 
@@ -1566,6 +1653,7 @@ const tools = {
   getWeather,
   scrapeWebsite,
   getYoutubeTranscript,
+  youtubeVideoAssistant,
   authorizeCalendar,
   rememberIdentity,
   rememberPreference,
@@ -2021,6 +2109,21 @@ Analyze the user's request and call the most appropriate tool with the correct p
                 }
                 
                 let secondResult;
+
+                // ▼▼▼ [핵심 수정] 새로운 '타임라인 데이터' 신호를 여기서 가로챕니다! ▼▼▼
+            if (typeof functionResult === 'string' && functionResult.startsWith('[TIMELINE_DATA]:::')) {
+                console.log('[API Handler] 타임라인 데이터 신호를 감지했습니다.');
+                const jsonData = functionResult.split(':::')[1];
+                const timelineData = JSON.parse(jsonData);
+                
+                finalReply = { 
+                    type: 'youtube_timeline', // <<<--- 새로운 메시지 타입!
+                    data: timelineData 
+                };
+
+            } else 
+
+                
         try {
             // --- 1. '명령어 실행' 도구의 경우, 확인 절차를 거칩니다. ---
             const parsedResult = JSON.parse(functionResult);
