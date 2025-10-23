@@ -32,66 +32,68 @@ function renderMetadata(container, message) {
 
 function renderMessageParts(parts, role, receivedAt) {
     const textView = createDOMElement('div', { className: 'message-text-view' });
+    
     (parts || []).forEach(part => {
         let partContent = null;
+
         switch(part.type) {
             case 'text':
                 if (part.text) {
                     partContent = createDOMElement('div', { className: 'text-part' });
                     let rawText = part.text;
-                    let videoId = null;
-
-                    // 1. ✨ 비밀 코드가 있는지 확인합니다.
-                    if (rawText.includes('||YT_VIDEO::')) {
-                        const segments = rawText.split('||YT_VIDEO::');
-                        rawText = segments[0]; // 앞부분은 순수 텍스트
-                        videoId = segments[1]; // 뒷부분은 비디오 ID
-                    }
-
-                    // ✨ 안전장치 추가: rawText가 유효한 문자열일 때만 검문소 로직 실행
+                    
+                    // ▼▼▼ [복구된 부분] 구글 캘린더 인증 링크 처리 로직이 여기에 다시 포함되었습니다! ▼▼▼
                     if (role === 'model' && typeof rawText === 'string' && (rawText.includes('구글 캘린더 연동하기') || rawText.includes('/authorize'))) {
                         const authLink = `<a href="/authorize" target="_blank" class="auth-link">여기를 클릭하여 인증하세요.</a>`;
                         rawText = "OK. 구글 캘린더를 연결하겠습니다. 먼저 접근 권한을 부여해야 합니다. 아래 링크를 방문하여 권한을 부여해주세요:\n\n" + authLink;
-                        console.log('[Link Interceptor] 인증 링크를 감지하고 /authorize 경로로 수정했습니다.');
                     }
 
                     const rawHtml = window.marked.parse(rawText);
                     const sanitizedHtml = window.DOMPurify.sanitize(rawHtml);
                     partContent.innerHTML = CodeBlock.enhance(sanitizedHtml);
-                // 3. ✨ 만약 비디오 ID가 있었다면, 텍스트 바로 다음에 플레이어를 추가합니다.
-                    if (videoId) {
-                        const playerContainer = createDOMElement('div', { className: 'youtube-player-container' });
-                        const playerId = `yt-player-${videoId}-${Date.now()}`;
-                        const playerDiv = createDOMElement('div', { id: playerId });
-                        playerContainer.appendChild(playerDiv);
-                        partContent.appendChild(playerContainer); // 텍스트 div의 자식으로 추가
-
-                        setTimeout(() => {
-                            if (window.YT && window.YT.Player) {
-                                new window.YT.Player(playerId, { videoId: videoId, width: '100%', playerVars: { 'playsinline': 1, 'autoplay': 0, 'rel': 0 } });
-                            }
-                        }, 100);
-                    }
                 }
                 break;
 
             case 'youtube_timeline':
                 if (part.data && part.data.videoId) {
                     const timelineData = part.data;
-                    
-                    // 1. 전체를 감싸는 컨테이너를 만듭니다.
                     partContent = createDOMElement('div', { className: 'timeline-container' });
 
-                    // 2. 유튜브 플레이어를 생성합니다.
+                    if (timelineData.fallback_summary) {
+                        const fallbackContainer = createDOMElement('div', { className: 'timeline-fallback-container' });
+                        fallbackContainer.innerHTML = window.marked.parse(timelineData.fallback_summary);
+                        partContent.appendChild(fallbackContainer);
+                    }
+
                     const playerContainer = createDOMElement('div', { className: 'youtube-player-container' });
                     const playerId = `yt-player-${timelineData.videoId}-${Date.now()}`;
-                    const playerDiv = createDOMElement('div', { id: playerId });
-                    playerContainer.appendChild(playerDiv);
+                    playerContainer.id = playerId;
                     partContent.appendChild(playerContainer);
 
-                    let player; // 나중에 타임라인 버튼에서 접근할 수 있도록 player 변수를 선언합니다.
+                    let player;
 
-                    // YouTube IFrame API를 사용하여 플레이어를 로드합니다.
+                    if (timelineData.summaries && timelineData.summaries.length > 0) {
+                        const segmentsContainer = createDOMElement('div', { className: 'timeline-segments-container' });
+                        timelineData.summaries.forEach(segment => {
+                            const segmentButton = createDOMElement('button', { 
+                                className: 'timeline-segment-button',
+                                'data-start-time': segment.start
+                            });
+                            
+                            const time = new Date(segment.start * 1000).toISOString().substr(14, 5);
+                            segmentButton.innerHTML = `<span class="segment-time">${time}</span> <span class="segment-summary">${segment.summary}</span>`;
+                            
+                            segmentButton.addEventListener('click', () => {
+                                if (player && player.seekTo) {
+                                    player.seekTo(segment.start, true);
+                                    player.playVideo();
+                                }
+                            });
+                            segmentsContainer.appendChild(segmentButton);
+                        });
+                        partContent.appendChild(segmentsContainer);
+                    }
+
                     setTimeout(() => {
                         if (window.YT && window.YT.Player) {
                             player = new window.YT.Player(playerId, {
@@ -101,93 +103,24 @@ function renderMessageParts(parts, role, receivedAt) {
                             });
                         }
                     }, 100);
-
-                    // 3. 구간별 요약 타임라인을 생성합니다. (요약이 있을 경우에만)
-                    if (timelineData.summaries && timelineData.summaries.length > 0) {
-                        const segmentsContainer = createDOMElement('div', { className: 'timeline-segments-container' });
-                        
-                        timelineData.summaries.forEach(segment => {
-                            // 각 구간을 위한 버튼을 만듭니다.
-                            const segmentButton = createDOMElement('button', { 
-                                className: 'timeline-segment-button',
-                                'data-start-time': segment.start // 'data-' 속성에 시작 시간을 저장합니다.
-                            });
-                            
-                            // 시간(00:00)과 요약 텍스트를 버튼 안에 넣습니다.
-                            const time = new Date(segment.start * 1000).toISOString().substr(14, 5);
-                            segmentButton.innerHTML = `<span class="segment-time">${time}</span> <span class="segment-summary">${segment.summary}</span>`;
-                            
-                            // 버튼에 클릭 이벤트를 추가합니다!
-                            segmentButton.addEventListener('click', () => {
-                                if (player && player.seekTo) {
-                                    // 저장해둔 시작 시간으로 영상을 이동시키고 재생합니다.
-                                    player.seekTo(segment.start, true);
-                                    player.playVideo();
-                                }
-                            });
-                            
-                            segmentsContainer.appendChild(segmentButton);
-                        });
-                        
-                        partContent.appendChild(segmentsContainer);
-                    }
                 }
                 break;
-            
-            case 'youtube_video':
-                if (part.videoId) {
-                    // 1. 플레이어가 삽입될 컨테이너 div를 만듭니다.
-                    partContent = createDOMElement('div', { className: 'youtube-player-container' });
-                    
-                    // 2. 플레이어 div에 고유한 ID를 부여합니다. 이것이 매우 중요합니다.
-                    const playerId = `yt-player-${part.videoId}-${Date.now()}`;
-                    const playerDiv = createDOMElement('div', { id: playerId });
-                    partContent.appendChild(playerDiv);
-
-                    // 3. YouTube IFrame API가 준비되었는지 확인하고 플레이어를 생성합니다.
-                    //    API가 아직 로드되지 않았을 수 있으므로, 약간의 지연을 두고 실행하는 것이 안전합니다.
-                    setTimeout(() => {
-                        if (window.YT && window.YT.Player) {
-                            new window.YT.Player(playerId, {
-                                videoId: part.videoId,
-                                width: '100%',
-                                playerVars: {
-                                    'playsinline': 1,
-                                    'autoplay': 0, // 자동재생은 0으로 설정하는 것이 좋습니다.
-                                    'rel': 0 // 관련 동영상 표시 안함
-                                }
-                            });
-                        } else {
-                            console.error('YouTube IFrame Player API가 아직 준비되지 않았습니다.');
-                            // API 로드가 늦어질 경우를 대비해 재시도 로직을 추가할 수도 있습니다.
-                        }
-                    }, 100); // 0.1초 지연
-                }
-                break;
-
+                
             case 'study_timer':
                 if (part.seconds) {
                     partContent = createDOMElement('div', { className: 'study-timer-container' });
-                    
-                    // ✨ 1. 타이머를 렌더링하기 전에, 먼저 백엔드에 '세션 시작'을 알립니다.
-                    //    'async' IIFE (즉시 실행 함수)를 사용하여 비동기 로직을 처리합니다.
                     (async () => {
                         try {
-                            // 2. StudyLoop.start()를 호출하고, 성공적으로 세션이 시작될 때까지 기다립니다.
                             const startResult = await StudyLoop.start('자율 루프 집중 세션');
-                            
                             if (startResult.success) {
-                                // 3. 세션이 성공적으로 시작된 후에만, 타이머 UI를 렌더링합니다.
                                 StudyLoop.renderTimerUI(partContent, part.seconds);
                             } else {
-                                // 만약 세션 시작에 실패하면, 사용자에게 오류 메시지를 보여줍니다.
                                 partContent.innerHTML = `<p style="color:red;">타이머 세션을 시작하는 데 실패했습니다: ${startResult.message}</p>`;
                             }
                         } catch (error) {
-                            console.error('StudyLoop.start() 실행 중 오류:', error);
                             partContent.innerHTML = `<p style="color:red;">타이머 시작 중 오류가 발생했습니다.</p>`;
                         }
-                    })(); // 즉시 실행!
+                    })();
                 }
                 break;
 
@@ -201,8 +134,12 @@ function renderMessageParts(parts, role, receivedAt) {
                 if (part.name) partContent = PdfSummary.create(part);
                 break;
         }
-        if (partContent) textView.appendChild(partContent);
+        
+        if (partContent) {
+            textView.appendChild(partContent);
+        }
     });
+
     return textView;
 }
 

@@ -344,83 +344,98 @@ async function getYoutubeTranscript({ url }) {
     }
 }
 
+async function displayYoutubeVideo({ videoId }) {
+    console.log(`[Tool Redirect] displayYoutubeVideo가 호출되었습니다. youtubeVideoAssistant로 리디렉션합니다.`);
+    // 이 도구는 이제 직접 아무것도 하지 않고, 만능 도구를 호출하는 역할만 합니다.
+    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    // 요약(summarize)은 false로 하여, 영상만 빠르게 보여주는 데 집중합니다.
+    return await youtubeVideoAssistant({ query: videoUrl, summarize: false, display: true });
+}
+
 async function youtubeVideoAssistant({ query, summarize = true, display = true }) {
     console.log(`[Timeline Engine] 타임라인 요약 시작. 검색어: "${query}"`);
 
     try {
-        // 1. [함수 호출] getYoutubeTranscript 함수를 통해 구조화된 자막 데이터를 가져옵니다.
+        // 1. getYoutubeTranscript 함수를 통해 구조화된 자막 데이터를 가져옵니다.
         console.log('[Timeline Engine] Step 1: getYoutubeTranscript 함수를 통해 자막 데이터를 요청합니다.');
-        
-        // 사용자가 직접 URL을 입력한 경우와 검색어를 입력한 경우를 모두 처리합니다.
-        const urlToProcess = (query.startsWith('http')) ? query : query; // 검색어에는 ' youtube'를 붙이지 않습니다. getYoutubeTranscript가 내부적으로 처리할 수 있습니다.
-        
+        const urlToProcess = (query.startsWith('http')) ? query : query;
         const transcriptData = await getYoutubeTranscript({ url: urlToProcess });
-
-        // transcriptData는 이제 { video_id, segments, message } 형태의 객체입니다.
         const { video_id, segments, message } = transcriptData;
-
-        if (!segments || segments.length === 0) {
-            return "이 영상은 요약할 자막 데이터가 없습니다.";
-        }
-        console.log(`[Timeline Engine] Step 1 성공: ${segments.length}개의 자막 세그먼트를 받았습니다.`);
 
         let finalResultPayload = {
             videoId: video_id,
-            summaries: []
+            summaries: [],
+            fallback_summary: ""
         };
-        
-        // 2. 사용자가 요약을 원할 경우에만 요약 작업을 진행합니다.
-        if (summarize) {
-            // [데이터 전처리] AI에게 보내기 좋게, 30초 단위로 자막을 합칩니다. (Chunking)
-            console.log('[Timeline Engine] Step 2: 자막 데이터를 30초 단위 청크로 그룹화합니다.');
-            const CHUNK_DURATION = 30;
-            const chunks = [];
-            let currentChunk = null;
 
-            for (const segment of segments) {
-                if (!currentChunk) {
-                    currentChunk = { start: segment.start, text: '' };
+        // 2. 자막(segments)이 존재하는지 확인하고 분기합니다.
+        if (segments && segments.length > 0) {
+            // [플랜 A] 자막이 있으면, 구간별 요약을 진행합니다.
+            if (summarize) {
+                console.log(`[Timeline Engine] 플랜 A: ${segments.length}개의 세그먼트로 구간별 요약을 시작합니다.`);
+                // 데이터 전처리: 30초 단위로 자막을 합칩니다. (Chunking)
+                const CHUNK_DURATION = 30;
+                const chunks = [];
+                let currentChunk = null;
+                for (const segment of segments) {
+                    if (!currentChunk) currentChunk = { start: segment.start, text: '' };
+                    currentChunk.text += segment.text + ' ';
+                    if (segment.end - currentChunk.start >= CHUNK_DURATION) {
+                        chunks.push(currentChunk);
+                        currentChunk = null;
+                    }
                 }
-                currentChunk.text += segment.text + ' ';
+                if (currentChunk && currentChunk.text.trim()) chunks.push(currentChunk);
 
-                if (segment.end - currentChunk.start >= CHUNK_DURATION) {
-                    chunks.push(currentChunk);
-                    currentChunk = null;
-                }
+                // AI 요약 루프
+                const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+                const model = genAI.getGenerativeModel({ model: 'gemini-flash-lite-latest' });
+                const summaryPromises = chunks.map(async (chunk) => {
+                    const prompt = `다음 텍스트는 영상의 한 장면입니다. 이 장면의 핵심 내용을 한 문장으로 간결하게 요약해줘:\n\n"${chunk.text}"`;
+                    try {
+                        const result = await model.generateContent(prompt);
+                        return { start: Math.floor(chunk.start), summary: result.response.text().trim().replace(/"/g, '') };
+                    } catch (e) {
+                        return { start: Math.floor(chunk.start), summary: "(요약 실패)" };
+                    }
+                });
+                finalResultPayload.summaries = await Promise.all(summaryPromises);
+                console.log(`[Timeline Engine] 플랜 A 성공: ${finalResultPayload.summaries.length}개의 구간 요약을 생성했습니다.`);
             }
-            if (currentChunk && currentChunk.text.trim()) {
-                chunks.push(currentChunk);
-            }
-            console.log(`[Timeline Engine] Step 2 성공: ${chunks.length}개의 요약할 청크를 만들었습니다.`);
 
-            // [AI 요약 루프] 각 청크를 AI에게 보내 '한 줄 요약'을 받아옵니다.
-            console.log('[Timeline Engine] Step 3: 각 청크를 Gemini API에 보내 요약을 요청합니다.');
+        } else if (summarize) {
+            // [플랜 B] 자막은 없지만, 요약을 원한 경우
+            console.log(`[Timeline Engine] 플랜 B: 자막 없음. scrapeWebsite를 이용한 기본 요약을 시도합니다.`);
+            const scrapedContent = await scrapeWebsite({ url: `https://www.youtube.com/watch?v=${video_id}` });
             const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
             const model = genAI.getGenerativeModel({ model: 'gemini-flash-lite-latest' });
-
-            const summaryPromises = chunks.map(async (chunk) => {
-                const prompt = `다음 텍스트는 특정 영상의 일부 장면입니다. 이 장면의 핵심 내용을 한 문장으로 간결하게 요약해줘:\n\n"${chunk.text}"`;
-                try {
-                    const result = await model.generateContent(prompt);
-                    const summary = result.response.text().trim().replace(/"/g, '');
-                    return { start: Math.floor(chunk.start), summary: summary };
-                } catch (e) {
-                    return { start: Math.floor(chunk.start), summary: "(요약 실패)" };
-                }
-            });
-            
-            finalResultPayload.summaries = await Promise.all(summaryPromises);
-            console.log('[Timeline Engine] Step 3 성공: 모든 청크 요약을 완료했습니다.');
-        } else {
-            // 요약을 원하지 않을 경우, 빈 summaries 배열을 보냅니다.
-            console.log('[Timeline Engine] 요약 단계는 건너뛰었습니다.');
+            const prompt = `다음은 영상의 제목과 설명입니다. 이 정보를 바탕으로 "이 영상은 ~하는 내용의 영상입니다." 와 같이 자연스럽게 한두 문장으로 소개해줘:\n\n${scrapedContent}`;
+            const result = await model.generateContent(prompt);
+            finalResultPayload.fallback_summary = result.response.text().trim() + `\n(${message || '자막 정보 없음'})`;
         }
-
-        // 4. [최종 결과 조합] 프론트엔드에 보낼 최종 결과물을 만듭니다.
-        // 이 특별한 형식의 문자열은 나중에 /api/chat 핸들러가 가로채서 처리할 것입니다.
+        
+        // 3. 최종 결과물을 비밀 코드와 함께 반환합니다.
+        // display가 true일 때만 TIMELINE_DATA 신호를 보내고,
+        // 그렇지 않으면(예: 요약만 요청한 경우) 텍스트 결과만 반환합니다.
+        if (!display) {
+            // 요약이 성공했으면 요약 내용을, 아니면 폴백 요약을, 그것도 없으면 기본 메시지를 반환
+            if (finalResultPayload.summaries.length > 0) {
+                return "구간별 요약이 완료되었습니다. 타임라인을 보려면 다시 요청해주세요.";
+            }
+            return finalResultPayload.fallback_summary || "영상에 대한 정보를 처리했습니다.";
+        }
         return `[TIMELINE_DATA]:::${JSON.stringify(finalResultPayload)}`;
 
     } catch (error) {
+        // 이 함수가 실패하더라도, 만약 display 옵션이 켜져 있었다면
+        // 어떻게든 영상이라도 보여주려고 시도합니다. 이것이 최종 안전장치입니다.
+        if (display) {
+            console.warn(`[Timeline Engine] 오류 발생으로 폴백 실행: 영상 플레이어만이라도 표시합니다.`);
+            const videoIdMatch = query.match(/v=([a-zA-Z0-9_-]{11})/);
+            if (videoIdMatch && videoIdMatch[1]) {
+                return `[TIMELINE_DATA]:::${JSON.stringify({ videoId: videoIdMatch[1], summaries: [], fallback_summary: "죄송합니다. 영상 정보를 처리하는 데 실패했습니다. 대신 영상만 보여드릴게요." })}`;
+            }
+        }
         const detail = error.response?.data?.detail || error.message;
         console.error(`[Timeline Engine] 타임라인 생성 중 심각한 오류 발생: ${detail}`);
         return `죄송합니다, 영상 타임라인을 생성하는 중 오류가 발생했습니다: ${detail}`;
@@ -1634,26 +1649,20 @@ function buildSystemPrompt(baseSystemPrompt, goalRow) {
 // --- 4. 도구 목록(tools 객체) 생성 ---
 const tools = {
 
-    displayYoutubeVideo: ({ videoId }) => {
-        // 이 함수는 서버에서 특별한 로직을 실행하지 않습니다.
-        // AI가 이 함수를 "호출했다"는 사실 자체가 프론트엔드에 보낼 신호가 됩니다.
-        // 실제 영상 렌더링은 클라이언트(브라우저)의 역할입니다.
-        console.log(`[Tool Called] AI가 유튜브 영상 표시를 요청했습니다. Video ID: ${videoId}`);
-        return `[SYSTEM] YouTube video player signal will be sent to the client for video ID: ${videoId}.`;
-    },
-
     start_study_timer: () => {
         // 이 함수는 실제로 아무 일도 하지 않습니다.
         // AI가 이 도구를 "호출했다"는 사실 자체가 중요합니다.
         // 우리는 functionCalls에서 이 이름만 확인할 것입니다.
         return "Timer tool called.";
     },
+
   getCurrentTime,
   searchWeb,
   getWeather,
   scrapeWebsite,
   getYoutubeTranscript,
   youtubeVideoAssistant,
+  displayYoutubeVideo,
   authorizeCalendar,
   rememberIdentity,
   rememberPreference,
@@ -1944,7 +1953,8 @@ app.post('/api/chat', async (req, res) => {
                   { name: 'searchWeb', description: '일반 검색(Fact Check)` 도구입니다. 사용자의 질문이 "OOO의 수도는?", "오늘 날씨 어때?", "OOO의 CEO는 누구야?" 와 같이 단일 사실 확인, 단순 정보 검색일 경우에만 사용하세요..', parameters: { type: 'object', properties: { query: { type: 'string', description: 'The search query' } }, required: ['query'] } },
                   { name: 'scrapeWebsite', description: '사용자가 제공한 특정 URL(웹사이트 링크)의 내용을 읽고 분석하거나 요약해야 할 때 사용합니다.', parameters: { type: 'object', properties: { url: { type: 'string', description: '내용을 읽어올 정확한 웹사이트 주소 (URL). 예: "https://..."' } }, required: ['url'] } },
                   { name: 'getYoutubeTranscript', description: '사용자가 "youtube.com" 또는 "youtu.be" 링크를 제공하며 영상의 내용을 요약하거나 분석해달라고 요청할 때 사용합니다.', parameters: { type: 'object', properties: { url: { type: 'string', description: '스크립트를 추출할 정확한 유튜브 영상 주소 (URL)' } }, required: ['url'] } },
-                  { name: 'displayYoutubeVideo', description: '사용자가 "영상 보여줘", "틀어줘" 등 영상을 채팅창에 표시해달라고 요청했을 때 사용하는 최종 도구입니다. 이 도구를 호출하기 전에 사용자에게 재생 여부를 되물을 필요 없이, 즉시 호출하여 영상을 화면에 표시해야 합니다.',  parameters: { type: 'object', properties: { videoId: { type: 'string', description: '재생할 YouTube 영상의 고유 ID. (예: "dQw4w9WgXcQ")' } }, required: ['videoId'] } },
+                  { name: 'displayYoutubeVideo', description: "사용자가 특정 유튜브 영상 ID나 URL을 주면서 **'요약 없이 영상만 즉시 보여달라'**고 요청했을 때 사용하는 가장 빠른 방법입니다.", parameters: { type: 'object', properties: { videoId: { type: 'string' } }, required: ['videoId'] } },
+                  { name: "youtubeVideoAssistant", description: "사용자가 유튜브 영상에 대해 '요약'과 '재생'을 **모두 또는 하나라도** 요청했을 때 사용하는 **가장 우선적인 만능 도구**입니다. 영상 URL이나 검색어를 모두 처리할 수 있습니다.", parameters: { type: "object", properties: { query: { type: "string", description: "사용자가 찾고자 하는 영상의 URL 또는 검색어." }, summarize: { type: "boolean", description: "사용자가 영상 '요약'을 원하는지 여부. (기본값: true)" }, display: { type: "boolean", description: "사용자가 영상을 채팅창에서 '재생'하기를 원하는지 여부. (기본값: true)" } }, required: ["query"] } },
                   { name: "recallUserProfile", description: "사용자가 '나에 대해 아는 것 말해줘', '내 프로필 요약해줘', '내가 누구야?' 등 AI가 자신에 대해 기억하는 모든 정보를 물어볼 때 사용합니다.", parameters: { type: 'object', properties: {} }},
                   { name: "rememberIdentity", description: "사용자가 자신의 이름이나 직업/역할에 대해 알려주며 기억해달라고 할 때 사용합니다. 예: '내 이름은 몬드야', '내 직업은 개발자야'", parameters: {  type: 'object',  properties: { key: { type: 'string', enum: ['name', 'role'], description: "기억할 정보의 종류. '이름'이면 'name', '직업'이나 '역할'이면 'role'입니다." }, value: { type: 'string', description: "기억할 실제 내용." } }, required: ["key", "value"] } },
                   { name: "rememberPreference", description: "사용자가 무언가를 '좋아한다' 또는 '싫어한다'고 명확하게 표현할 때 사용합니다. 예: '난 민트초코를 좋아해', '나는 오이를 싫어해'", parameters: {  type: 'object',  properties: { type: { type: 'string', enum: ['likes', 'dislikes'], description: "'좋아하면' 'likes', '싫어하면' 'dislikes'입니다." }, item: { type: 'string', description: "좋아하거나 싫어하는 대상." } }, required: ["type", "item"] }},
@@ -2045,175 +2055,80 @@ Analyze the user's request and call the most appropriate tool with the correct p
         let finalReply;
 
         if (functionCalls && functionCalls.length > 0) {
-        const functionCall = functionCalls[0];
-        const { name, args } = functionCall; 
+            const functionCall = functionCalls[0];
+            const { name, args } = functionCall;
 
-        // 'displayYoutubeVideo' 호출을 처리하는 특별 분기를 추가
-            if (name === 'displayYoutubeVideo') {
-                console.log('[YouTube Player] AI가 영상 재생 도구를 호출했습니다.');
-                
-                const videoReply = { 
-                    type: 'youtube_video', 
-                    videoId: args.videoId
-                };
-                
-                // 특별 응답을 DB에 기록하고, 프론트엔드로 즉시 전송 후 함수를 종료합니다.
-                conversationHistory.push({ role: 'model', parts: [videoReply] });
-                dbManager.saveChatMessage(chatId, 'model', [videoReply]);
-                console.log(`[History] 새로운 메시지(youtube_video)를 DB의 ${chatId} 대화에 저장했습니다.`);
-                
-                // 이 경우에는 추가적인 AI 학습이나 기억 저장을 건너뜁니다.
-                return res.json({ reply: videoReply, chatId: chatId, usage: { totalTokenCount: totalTokenCount } });
-            }
-
-            // 1. 'start_study_timer' 도구 호출을 위한 '특별 통로'
             if (name === 'start_study_timer') {
                 console.log('[Study Loop] AI가 공부 타이머 시작 도구를 호출했습니다.');
                 const logId = dbManager.startActivityLog('study');
                 const focusMinutes = dbManager.getUserSetting('focus_minutes', 25);
-
                 const timerReply = { 
                     type: 'study_timer', 
                     seconds: parseInt(focusMinutes, 10) * 60,
                     logId: logId
                 };
-                
-                // 이 특별 응답을 DB에 기록하고, 프론트엔드로 즉시 전송 후 함수를 완전히 종료합니다.
                 conversationHistory.push({ role: 'model', parts: [timerReply] });
                 dbManager.saveChatMessage(chatId, 'model', [timerReply]);
-                console.log(`[History] 새로운 메시지(study_timer)를 DB의 ${chatId} 대화에 저장했습니다.`);
-                
-                // AI Learning, saveMemory 등은 이 특별한 경우에는 건너뜁니다.
-                
                 return res.json({ reply: timerReply, chatId: chatId, usage: { totalTokenCount: totalTokenCount } });
             }
 
-            if (tools[name] || name === 'createSummaryAndSave') { 
+            if (tools[name]) {
                 const deAnonymizedArgs = {};
                 for (const key in args) {
                     if (typeof args[key] === 'string') {
-                        // ✨ 'anonymizeText'가 아니라 'deAnonymizeText'를 사용합니다.
                         deAnonymizedArgs[key] = deAnonymizeText(args[key], combinedMap);
                     } else {
                         deAnonymizedArgs[key] = args[key];
                     }
                 }
 
-                let functionResult;
-                if (name === 'autonomousResearcher') {
-                    functionResult = await tools[name](deAnonymizedArgs, modelName);
-                } else if (name === 'createSummaryAndSave') {
-                    functionResult = await createSummaryAndSave(deAnonymizedArgs, conversationHistory, genAI);
-                } else {
-                    functionResult = await tools[name](deAnonymizedArgs);
-                }
-                
+                const functionResult = await tools[name](deAnonymizedArgs);
                 let secondResult;
 
-                // ▼▼▼ [핵심 수정] 새로운 '타임라인 데이터' 신호를 여기서 가로챕니다! ▼▼▼
-            if (typeof functionResult === 'string' && functionResult.startsWith('[TIMELINE_DATA]:::')) {
-                console.log('[API Handler] 타임라인 데이터 신호를 감지했습니다.');
-                const jsonData = functionResult.split(':::')[1];
-                const timelineData = JSON.parse(jsonData);
-                
-                finalReply = { 
-                    type: 'youtube_timeline', // <<<--- 새로운 메시지 타입!
-                    data: timelineData 
-                };
-
-            } else 
-
-                
-        try {
-            // --- 1. '명령어 실행' 도구의 경우, 확인 절차를 거칩니다. ---
-            const parsedResult = JSON.parse(functionResult);
-            if (parsedResult && parsedResult.needsConfirmation) {
-                pendingConfirmations[chatId] = parsedResult;
-                const confirmationPrompt = `The user wants to execute the command(s) '${JSON.stringify(parsedResult.details)}'. Your task is to ask the user for confirmation to proceed. Keep your question concise and clear, in Korean. For example: "알겠습니다. 다음 명령어를 실행하려고 합니다: [명령어]. 계속할까요? (Y/N)"`;
-                secondResult = await chat.sendMessage(confirmationPrompt);
-                const deAnonymizedText = deAnonymizeText(secondResult.response.text(), combinedMap);
-                finalReply = { type: 'text', text: deAnonymizedText };
-                if (secondResult) {
-                    totalTokenCount += secondResult.response.usageMetadata?.totalTokenCount || 0;
-                }
-            } else {
-                throw new Error("Not a confirmation request.");
-            }
-        } catch (e) {
-            // --- 2. 그 외 모든 일반 도구들의 결과를 처리합니다. ---
-            
-            // 2-1. '날짜 변환' -> '캘린더 조회' 처럼 연계가 필요한 경우
-            if (name === 'convertNaturalDateToISO') {
-                try {
-                    const calendarArgs = JSON.parse(functionResult);
-                    functionResult = await tools['getCalendarEvents'](calendarArgs);
-                    const finalFunctionName = 'getCalendarEvents';
-                    const functionResponse = { name: finalFunctionName, response: { name: finalFunctionName, content: functionResult } };
-                    secondResult = await chat.sendMessage([{ functionResponse: functionResponse }]);
-                    const deAnonymizedText = deAnonymizeText(secondResult.response.text(), combinedMap);
-                    finalReply = { type: 'text', text: deAnonymizedText };
-                    if (secondResult) totalTokenCount += secondResult.response.usageMetadata?.totalTokenCount || 0;
-                } catch (chainError) {
-                     // 연계 실패 시, 원래 결과라도 보고합니다.
-                    const functionResponse = { name: name, response: { name: name, content: functionResult } };
-                    secondResult = await chat.sendMessage([{ functionResponse: functionResponse }]);
-                    const deAnonymizedText = deAnonymizeText(secondResult.response.text(), combinedMap);
-                    finalReply = { type: 'text', text: deAnonymizedText };
-                    if (secondResult) totalTokenCount += secondResult.response.usageMetadata?.totalTokenCount || 0;
-                }
-            } 
-            // 2-2. ★★★ 여기가 바로 빠졌던 핵심 부분입니다! ★★★
-            else {
-                // ▼▼▼▼▼ [핵심 수정] 바로 이 블록 전체를 교체해주세요! ▼▼▼▼▼
-
-                // 1. (기존 로직) AI에게 도구 실행 결과를 보고합니다.
-                const functionResponse = { name: name, response: { name: name, content: functionResult } };
-                secondResult = await chat.sendMessage([ { functionResponse: functionResponse } ]);
-                
-                // 2. (기존 로직) AI가 최종 텍스트 답변을 생성합니다.
-                let summaryText = deAnonymizeText(secondResult.response.text(), combinedMap);
-
-                // 3. ✨ [새로운 검문 로직] '서버-사이드 증강'을 시작합니다!
-                // 만약 사용된 도구가 '유튜브 스크립트'였다면...
-                if (name === 'getYoutubeTranscript') {
-                    // 원본 사용자 메시지를 확인합니다.
-                    const lastUserText = conversationHistory.slice(-1)[0]?.parts.find(p => p.type === 'text')?.text || '';
-                    const showKeywords = ['보여줘', '틀어줘', '재생해줘', '보여 줘'];
-
-                    // 만약 원본 메시지에 '보여줘' 같은 키워드가 있었다면...
-                    if (showKeywords.some(keyword => lastUserText.includes(keyword))) {
-                        console.log('[Server Augmentation] 영상 표시 요청을 감지했습니다. 응답에 비디오 ID를 추가합니다.');
-                        
-                        // 유튜브 URL에서 비디오 ID를 추출하는 간단한 로직
-                        let videoId = '';
-                        const url = args.url; // 도구에 전달된 URL
-                        if (url.includes('youtu.be/')) {
-                            videoId = url.split('youtu.be/')[1].split('?')[0];
-                        } else if (url.includes('watch?v=')) {
-                            videoId = url.split('watch?v=')[1].split('&')[0];
+                if (typeof functionResult === 'string' && functionResult.startsWith('[TIMELINE_DATA]:::')) {
+                    console.log('[API Handler] 타임라인 데이터 신호를 감지했습니다.');
+                    const jsonData = functionResult.split(':::')[1];
+                    finalReply = { 
+                        type: 'youtube_timeline',
+                        data: JSON.parse(jsonData)
+                    };
+                } else {
+                    try {
+                        const parsedResult = JSON.parse(functionResult);
+                        if (parsedResult && parsedResult.needsConfirmation) {
+                            pendingConfirmations[chatId] = parsedResult;
+                            const confirmationPrompt = `The user wants to execute the command(s) '${JSON.stringify(parsedResult.details)}'. Your task is to ask for confirmation...`;
+                            secondResult = await chat.sendMessage(confirmationPrompt);
+                        } else { 
+                            throw new Error("Not a confirmation request."); 
                         }
-
-                        // 만약 비디오 ID를 성공적으로 찾았다면...
-                        if (videoId) {
-                            // AI가 만든 요약 텍스트 뒤에 [비밀 코드 + 비디오 ID]를 붙입니다.
-                            summaryText += `||YT_VIDEO::${videoId}`;
+                    } catch (e) {
+                         if (name === 'convertNaturalDateToISO') {
+                            try {
+                                const calendarArgs = JSON.parse(functionResult);
+                                const chainedResult = await tools['getCalendarEvents'](calendarArgs);
+                                const functionResponse = { name: 'getCalendarEvents', response: { name: 'getCalendarEvents', content: chainedResult } };
+                                secondResult = await chat.sendMessage([{ functionResponse: functionResponse }]);
+                            } catch (chainError) {
+                                const functionResponse = { name: name, response: { name: name, content: functionResult } };
+                                secondResult = await chat.sendMessage([{ functionResponse: functionResponse }]);
+                            }
+                        } else {
+                            const functionResponse = { name: name, response: { name: name, content: functionResult } };
+                            secondResult = await chat.sendMessage([{ functionResponse: functionResponse }]);
                         }
                     }
-                }
-                
-                // 4. (기존 로직) 최종적으로 가공된 답변을 finalReply에 담습니다.
-                finalReply = { type: 'text', text: summaryText };
 
-                if (secondResult) {
-                    totalTokenCount += secondResult.response.usageMetadata?.totalTokenCount || 0;
+                    if (secondResult) {
+                        const deAnonymizedText = deAnonymizeText(secondResult.response.text(), combinedMap);
+                        finalReply = { type: 'text', text: deAnonymizedText };
+                        totalTokenCount += secondResult.response.usageMetadata?.totalTokenCount || 0;
+                    }
                 }
-            }
-        }
-    } else {
+            } else {
                 finalReply = { type: 'text', text: `오류: 알 수 없는 도구 '${name}'를 호출했습니다.` };
             }
         } else {
-            // "functionCalls"가 없을 때, 즉 순수한 일반 텍스트 답변일 때
             const deAnonymizedText = deAnonymizeText(response.text(), combinedMap);
             finalReply = { type: 'text', text: deAnonymizedText };
         }
