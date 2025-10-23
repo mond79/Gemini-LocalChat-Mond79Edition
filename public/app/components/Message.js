@@ -116,35 +116,35 @@ function renderMessageParts(parts, role, receivedAt) {
                                 width: '100%',
                                 playerVars: { 'playsinline': 1, 'autoplay': 0, 'rel': 0 },
                                 events: {
-                                    // ▼▼▼ [스크롤 싱크 로직] ▼▼▼
                                     'onStateChange': (event) => {
-                                        // 이전에 실행되던 인터벌이 있으면 중지 (메모리 누수 방지)
                                         if (timelineInterval) clearInterval(timelineInterval);
 
-                                        // 영상이 '재생' 상태일 때만 1초마다 현재 시간 추적 시작
                                         if (event.data === window.YT.PlayerState.PLAYING) {
                                             timelineInterval = setInterval(() => {
                                                 const currentTime = player.getCurrentTime();
-                                                const allSegments = document.querySelectorAll(`#timeline-segments-${playerId} .timeline-segment-button`);
+                                                const allSegmentButtons = document.querySelectorAll(`#timeline-segments-${playerId} .timeline-segment-button`);
                                                 
-                                                let activeSegmentFound = false;
+                                                let activeIndex = -1;
+                                                // 현재 시간에 맞는 구간을 찾습니다.
                                                 for (let i = 0; i < timelineData.summaries.length; i++) {
                                                     const segment = timelineData.summaries[i];
                                                     const nextSegment = timelineData.summaries[i + 1];
                                                     const segmentEndTime = nextSegment ? nextSegment.start : player.getDuration();
-
                                                     if (currentTime >= segment.start && currentTime < segmentEndTime) {
-                                                        allSegments[i].classList.add('active');
-                                                        activeSegmentFound = true;
-                                                    } else {
-                                                        allSegments[i].classList.remove('active');
+                                                        activeIndex = i;
+                                                        break;
                                                     }
                                                 }
-                                                // 활성화된 세그먼트가 없으면 모든 활성화를 제거
-                                                if (!activeSegmentFound) {
-                                                    allSegments.forEach(btn => btn.classList.remove('active'));
-                                                }
-                                            }, 500); // 0.5초마다 체크하여 부드럽게
+
+                                                // 모든 버튼의 active 클래스를 업데이트합니다.
+                                                allSegmentButtons.forEach((button, index) => {
+                                                    if (index === activeIndex) {
+                                                        button.classList.add('active');
+                                                    } else {
+                                                        button.classList.remove('active');
+                                                    }
+                                                });
+                                            }, 500); // 0.5초마다 체크
                                         }
                                     }
                                 }

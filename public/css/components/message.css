@@ -293,3 +293,27 @@ body.dark-mode {
   --primary-color-bg: rgba(58, 118, 240, 0.25);
   --hover-color: rgba(255, 255, 255, 0.08);
 }
+
+/* --- Timeline Active Highlight (Scroll Sync) --- */
+
+.timeline-segment-button.active {
+    background-color: var(--primary-color-bg);
+    border-color: var(--primary-color);
+}
+
+.timeline-segment-button.active .segment-time,
+.timeline-segment-button.active .segment-summary {
+    color: var(--text-color);
+    font-weight: 600;
+}
+
+/* 다크 모드에서도 활성화 스타일이 잘 보이도록 보강 */
+body.dark-mode .timeline-segment-button.active {
+    background-color: rgba(58, 118, 240, 0.25); /* ChatGPT가 제안한 더 명확한 색상 */
+    border-color: var(--primary-color);
+}
+
+body.dark-mode .timeline-segment-button.active .segment-time,
+body.dark-mode .timeline-segment-button.active .segment-summary {
+    color: #f2f2f7; /* 다크 모드에서의 가장 밝은 텍스트 색상 */
+}
