@@ -364,44 +364,68 @@ async function youtubeVideoAssistant({ query, summarize = true, display = true }
 
         let finalResultPayload = {
             videoId: video_id,
+            overview: "",
             summaries: [],
             fallback_summary: ""
         };
 
         // 2. 자막(segments)이 존재하는지 확인하고 분기합니다.
-        if (segments && segments.length > 0) {
-            // [플랜 A] 자막이 있으면, 구간별 요약을 진행합니다.
-            if (summarize) {
-                console.log(`[Timeline Engine] 플랜 A: ${segments.length}개의 세그먼트로 구간별 요약을 시작합니다.`);
-                // 데이터 전처리: 30초 단위로 자막을 합칩니다. (Chunking)
-                const CHUNK_DURATION = 30;
-                const chunks = [];
-                let currentChunk = null;
-                for (const segment of segments) {
-                    if (!currentChunk) currentChunk = { start: segment.start, text: '' };
-                    currentChunk.text += segment.text + ' ';
-                    if (segment.end - currentChunk.start >= CHUNK_DURATION) {
-                        chunks.push(currentChunk);
-                        currentChunk = null;
-                    }
-                }
-                if (currentChunk && currentChunk.text.trim()) chunks.push(currentChunk);
+        if (segments && segments.length > 0 && summarize) {
+            console.log(`[Timeline Engine V2] 플랜 A: ${segments.length}개의 세그먼트로 분석을 시작합니다.`);
+            const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+            const model = genAI.getGenerativeModel({ model: 'gemini-flash-lite-latest' });
 
-                // AI 요약 루프
-                const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-                const model = genAI.getGenerativeModel({ model: 'gemini-flash-lite-latest' });
-                const summaryPromises = chunks.map(async (chunk) => {
-                    const prompt = `다음 텍스트는 영상의 한 장면입니다. 이 장면의 핵심 내용을 한 문장으로 간결하게 요약해줘:\n\n"${chunk.text}"`;
-                    try {
-                        const result = await model.generateContent(prompt);
-                        return { start: Math.floor(chunk.start), summary: result.response.text().trim().replace(/"/g, '') };
-                    } catch (e) {
-                        return { start: Math.floor(chunk.start), summary: "(요약 실패)" };
-                    }
-                });
-                finalResultPayload.summaries = await Promise.all(summaryPromises);
-                console.log(`[Timeline Engine] 플랜 A 성공: ${finalResultPayload.summaries.length}개의 구간 요약을 생성했습니다.`);
+            // [새로운 기능 1. '개요' 생성]
+            const fullTranscript = segments.map(s => s.text).join(' ');
+            const overviewPrompt = `다음 영상 자막 전체를 보고, 이 영상의 주제와 분위기를 2~3 문장으로 간결하게 '개요'를 작성해줘:\n\n"${fullTranscript}"`;
+            try {
+                const overviewResult = await model.generateContent(overviewPrompt);
+                finalResultPayload.overview = overviewResult.response.text().trim();
+                console.log('[Timeline Engine V2] Step 1: 영상 전체 개요 생성 성공.');
+            } catch (e) {
+                console.error(`[Timeline Engine V2] 개요 생성 중 오류: ${e.message}`);
+                finalResultPayload.overview = "영상 전체 개요를 생성하는 데 실패했습니다.";
             }
+
+            // [기존 기능 + 새로운 기능 2. '구간별 요약' 및 '감정 태그' 생성]
+            const CHUNK_DURATION = 30;
+            const chunks = [];
+            let currentChunk = null;
+            for (const segment of segments) {
+                if (!currentChunk) currentChunk = { start: segment.start, text: '' };
+                currentChunk.text += segment.text + ' ';
+                if (segment.end - currentChunk.start >= CHUNK_DURATION) {
+                    chunks.push(currentChunk);
+                    currentChunk = null;
+                }
+            }
+            if (currentChunk && currentChunk.text.trim()) chunks.push(currentChunk);
+
+            console.log('[Timeline Engine V2] Step 2: 각 청크를 Gemini API에 보내 요약 및 감정 분석을 요청합니다.');
+            const summaryPromises = chunks.map(async (chunk) => {
+                const summaryPrompt = `다음 텍스트는 영상의 한 장면입니다. 이 장면의 핵심 내용을 한 문장으로 간결하게 요약해줘:\n\n"${chunk.text}"`;
+                try {
+                    const result = await model.generateContent(summaryPrompt);
+                    const summary = result.response.text().trim().replace(/"/g, '');
+                    
+                    // [감정 태그 분석 로직]
+                    let emotion_tag = 'neutral';
+                    if (summary.includes('춤') || summary.includes('게임') || summary.includes('플레이')) emotion_tag = 'action';
+                    else if (summary.includes('웃음') || summary.includes('재미') || summary.includes('즐거워')) emotion_tag = 'happy';
+                    else if (summary.includes('어려워') || summary.includes('힘들어') || summary.includes('당황')) emotion_tag = 'tense';
+                    else if (summary.includes('대화') || summary.includes('이야기') || summary.includes('소개')) emotion_tag = 'dialogue';
+
+                    return { 
+                        start: Math.floor(chunk.start), 
+                        summary: summary,
+                        emotion_tag: emotion_tag
+                    };
+                } catch (e) {
+                    return { start: Math.floor(chunk.start), summary: "(요약 실패)", emotion_tag: 'error' };
+                }
+            });
+            finalResultPayload.summaries = await Promise.all(summaryPromises);
+            console.log(`[Timeline Engine V2] Step 2 성공: ${finalResultPayload.summaries.length}개의 구간 요약 및 감정 분석을 완료했습니다.`);
 
         } else if (summarize) {
             // [플랜 B] 자막은 없지만, 요약을 원한 경우

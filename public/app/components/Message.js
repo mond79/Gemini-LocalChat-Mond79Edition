@@ -59,25 +59,39 @@ function renderMessageParts(parts, role, receivedAt) {
                     const timelineData = part.data;
                     partContent = createDOMElement('div', { className: 'timeline-container' });
 
+                    // ▼▼▼ [1. '상단 개요' 렌더링] ▼▼▼
+                    if (timelineData.overview) {
+                        const overviewContainer = createDOMElement('div', { className: 'timeline-overview' });
+                        overviewContainer.innerHTML = `<h3>📘 영상 개요</h3>${window.marked.parse(timelineData.overview)}`;
+                        partContent.appendChild(overviewContainer);
+                    }
+
+                    // (자막 없는 영상의 '폴백 요약'도 '개요' 형식으로 함께 표시)
                     if (timelineData.fallback_summary) {
-                        const fallbackContainer = createDOMElement('div', { className: 'timeline-fallback-container' });
-                        fallbackContainer.innerHTML = window.marked.parse(timelineData.fallback_summary);
+                        const fallbackContainer = createDOMElement('div', { className: 'timeline-overview' }); // 같은 스타일 적용
+                        fallbackContainer.innerHTML = `<h3>⚠️ 요약 정보</h3>${window.marked.parse(timelineData.fallback_summary)}`;
                         partContent.appendChild(fallbackContainer);
                     }
 
+                    // 2. 유튜브 플레이어 생성
                     const playerContainer = createDOMElement('div', { className: 'youtube-player-container' });
                     const playerId = `yt-player-${timelineData.videoId}-${Date.now()}`;
                     playerContainer.id = playerId;
                     partContent.appendChild(playerContainer);
 
                     let player;
+                    let timelineInterval; // 스크롤 싱크를 위한 인터벌 ID 저장 변수
 
+                    // 3. 구간별 요약 타임라인 생성 (요약 데이터가 있을 경우)
                     if (timelineData.summaries && timelineData.summaries.length > 0) {
                         const segmentsContainer = createDOMElement('div', { className: 'timeline-segments-container' });
-                        timelineData.summaries.forEach(segment => {
+                        segmentsContainer.id = `timeline-segments-${playerId}`; // 각 타임라인에 고유 ID 부여
+                        
+                        timelineData.summaries.forEach((segment, index) => {
                             const segmentButton = createDOMElement('button', { 
-                                className: 'timeline-segment-button',
-                                'data-start-time': segment.start
+                                className: `timeline-segment-button highlight-${segment.emotion_tag || 'neutral'}`, // <<< [감정 하이라이트]
+                                'data-start-time': segment.start,
+                                'data-segment-index': index // 스크롤 싱크를 위해 인덱스 저장
                             });
                             
                             const time = new Date(segment.start * 1000).toISOString().substr(14, 5);
@@ -94,12 +108,46 @@ function renderMessageParts(parts, role, receivedAt) {
                         partContent.appendChild(segmentsContainer);
                     }
 
+                    // 4. 플레이어 생성 및 '스크롤 싱크' 이벤트 연결
                     setTimeout(() => {
                         if (window.YT && window.YT.Player) {
                             player = new window.YT.Player(playerId, {
                                 videoId: timelineData.videoId,
                                 width: '100%',
-                                playerVars: { 'playsinline': 1, 'autoplay': 0, 'rel': 0 }
+                                playerVars: { 'playsinline': 1, 'autoplay': 0, 'rel': 0 },
+                                events: {
+                                    // ▼▼▼ [스크롤 싱크 로직] ▼▼▼
+                                    'onStateChange': (event) => {
+                                        // 이전에 실행되던 인터벌이 있으면 중지 (메모리 누수 방지)
+                                        if (timelineInterval) clearInterval(timelineInterval);
+
+                                        // 영상이 '재생' 상태일 때만 1초마다 현재 시간 추적 시작
+                                        if (event.data === window.YT.PlayerState.PLAYING) {
+                                            timelineInterval = setInterval(() => {
+                                                const currentTime = player.getCurrentTime();
+                                                const allSegments = document.querySelectorAll(`#timeline-segments-${playerId} .timeline-segment-button`);
+                                                
+                                                let activeSegmentFound = false;
+                                                for (let i = 0; i < timelineData.summaries.length; i++) {
+                                                    const segment = timelineData.summaries[i];
+                                                    const nextSegment = timelineData.summaries[i + 1];
+                                                    const segmentEndTime = nextSegment ? nextSegment.start : player.getDuration();
+
+                                                    if (currentTime >= segment.start && currentTime < segmentEndTime) {
+                                                        allSegments[i].classList.add('active');
+                                                        activeSegmentFound = true;
+                                                    } else {
+                                                        allSegments[i].classList.remove('active');
+                                                    }
+                                                }
+                                                // 활성화된 세그먼트가 없으면 모든 활성화를 제거
+                                                if (!activeSegmentFound) {
+                                                    allSegments.forEach(btn => btn.classList.remove('active'));
+                                                }
+                                            }, 500); // 0.5초마다 체크하여 부드럽게
+                                        }
+                                    }
+                                }
                             });
                         }
                     }, 100);

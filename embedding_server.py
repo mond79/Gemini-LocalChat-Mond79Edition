@@ -212,24 +212,26 @@ def get_youtube_transcript(request: YouTubeTranscriptRequest):
             # ▼▼▼ [핵심 개선] 쿨다운 옵션을 추가하고, 플랜 A/B를 통합합니다. ▼▼▼
             command = [
                 'yt-dlp',
-                # '--write-subs', '--write-auto-subs'를 통합하는 가장 좋은 방법은
-                # 자막이 존재하면 어떤 종류든 쓰도록 하는 것입니다.
+                '--restrict-filenames', # 파일명에 포함될 수 없는 특수문자, 이모지 등을 안전한 문자로 치환
                 '--write-sub', '--write-automatic-sub',
                 '--sub-lang', 'ko,en',
                 '--skip-download',
                 '--sub-format', 'vtt',
                 '--output', os.path.join(temp_dir, '%(id)s.%(ext)s'),
-                # [쿨다운 옵션] 유튜브의 요청 제한(429)을 피하기 위한 설정
                 '--sleep-interval', '2',
                 '--max-sleep-interval', '5',
                 video_url
             ]
             
             result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8')
-            
-            # 디버깅을 위해 stderr(에러 로그)를 항상 확인합니다.
-            if result.stderr:
-                print(f"DEBUG: (yt-dlp) STDERR: {result.stderr[:500]}")
+
+            # ▼▼▼ [최종 개선] 상세 디버깅 로그 추가 ▼▼▼
+            if result.returncode != 0:
+                print(f"ERROR: (yt-dlp) 실행 실패. STDERR 전체:\n{result.stderr}")
+                raise subprocess.CalledProcessError(result.returncode, command, output=result.stdout, stderr=result.stderr)
+
+            downloaded_files = os.listdir(temp_dir)
+            print(f"DEBUG: (yt-dlp) 임시 폴더 내용: {downloaded_files}") # 생성된 파일 목록 확인
 
             # ▼▼▼ [핵심 개선] "하나라도 성공하면 OK" 로직 ▼▼▼
             downloaded_files = os.listdir(temp_dir)
