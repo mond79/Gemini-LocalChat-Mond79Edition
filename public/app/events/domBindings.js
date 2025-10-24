@@ -82,6 +82,19 @@ export function bindEvents(handlers) {
     // --- Chat Area ---
     const chatBox = $('#chat-box');
     chatBox.addEventListener('click', e => {
+        // [v3.0 신규] '타임 점프' 버튼 클릭을 가장 먼저 확인합니다.
+        const timestampLink = e.target.closest('.timestamp-link');
+        if (timestampLink) {
+            // 전역 window 객체를 통해 CommentaryEngine에 접근합니다.
+            if (window.CommentaryEngine && window.CommentaryEngine.player) {
+                const timeInSeconds = parseFloat(timestampLink.dataset.timeSeconds);
+                if (!isNaN(timeInSeconds)) {
+                    window.CommentaryEngine.player.seekTo(timeInSeconds, true);
+                    window.CommentaryEngine.player.playVideo();
+                }
+            }
+            return; // 타임 점프 처리 후 종료
+        }
         const copyBtn = e.target.closest('.code-block-copy-btn');
         if (copyBtn) { handlers.handleCopyCodeBlock(copyBtn); return; }
         if (e.target.classList.contains('message-image')) { Modal.openImageModal(e.target.src); return; }

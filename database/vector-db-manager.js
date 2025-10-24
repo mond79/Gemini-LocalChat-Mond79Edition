@@ -71,6 +71,20 @@ async function rebuildVectorDB(allMemories) {
     }
 }
 
+async function rebuildVectorDB(allMemories) {
+    try {
+        console.log(`[VectorDB Manager] VectorDB 재구축을 요청합니다. (기억 ${allMemories.length}개)`);
+        const response = await axios.post(`${PYTHON_SERVER_URL}/rebuild_db`, {
+            data: allMemories
+        });
+        console.log('[VectorDB Manager] 재구축 응답:', response.data.message);
+        return true;
+    } catch (error) {
+        console.error('[VectorDB Manager] VectorDB 재구축 중 심각한 오류 발생:', error.response ? error.response.data : error.message);
+        throw error; // 오류를 상위로 전파
+    }
+}
+
 module.exports = {
     addMemory,
     searchMemories,

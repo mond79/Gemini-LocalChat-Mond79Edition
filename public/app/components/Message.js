@@ -50,7 +50,7 @@ function renderMessageParts(parts, role, receivedAt) {
                     }
 
                     const rawHtml = window.marked.parse(rawText);
-                    const sanitizedHtml = window.DOMPurify.sanitize(rawHtml);
+                    let sanitizedHtml = window.DOMPurify.sanitize(rawHtml);
                     partContent.innerHTML = CodeBlock.enhance(sanitizedHtml);
                 }
                 break;
@@ -138,14 +138,23 @@ function renderMessageParts(parts, role, receivedAt) {
         }
         
                     // 4. 플레이어 생성 및 스크롤 싱크 이벤트 연결 (기존과 동일)
-                    setTimeout(() => {
+                   setTimeout(() => {
                         if (window.YT && window.YT.Player) {
-                            // 1. [기존 로직 유지] 플레이어를 생성합니다.
                             player = new window.YT.Player(playerId, {
                                 videoId: timelineData.videoId,
                                 width: '100%',
                                 playerVars: { 'playsinline': 1, 'autoplay': 0, 'rel': 0 },
                                 events: {
+                                    // 1. [핵심] 'onReady' 이벤트가 발생하면 (플레이어가 준비되면) CommentaryEngine을 시작합니다.
+                                    'onReady': (event) => {
+                                        console.log("YouTube Player is ready! Starting Commentary Engine...");
+                                        if (timelineData.chapters && timelineData.chapters.length > 0) {
+                                            const toggleButton = document.getElementById(`commentary-toggle-${timelineData.videoId}`);
+                                            // ▼▼▼ [✅ 롤백] videoId를 전달하지 않는 원래 버전으로 되돌립니다. ▼▼▼
+                                            CommentaryEngine.start(player, timelineData.chapters, toggleButton);
+                                        }
+                                    },
+                                    // 2. [기존 로직] 'onStateChange' 이벤트는 스크롤 싱크 기능을 그대로 담당합니다.
                                     'onStateChange': (event) => {
                                         if (timelineInterval) clearInterval(timelineInterval);
                                         if (event.data === window.YT.PlayerState.PLAYING) {
@@ -154,7 +163,6 @@ function renderMessageParts(parts, role, receivedAt) {
                                                 const allButtons = document.querySelectorAll(`#timeline-chapters-${playerId} .timeline-segment-button`);
                                                 allButtons.forEach(button => {
                                                     const startTime = parseFloat(button.dataset.startTime);
-                                                    // [개선] nextElementSibling은 같은 챕터 내에서만 찾아야 하므로, 더 안정적인 방법으로 수정합니다.
                                                     const nextButton = Array.from(allButtons).find(b => parseFloat(b.dataset.startTime) > startTime);
                                                     const endTime = nextButton ? parseFloat(nextButton.dataset.startTime) : startTime + 30;
                                                     
@@ -169,13 +177,8 @@ function renderMessageParts(parts, role, receivedAt) {
                                     }
                                 }
                             });
-
-                            // 2. 🟢 [v2.7 최종 수정] 방금 만든 플레이어, 챕터 데이터, 그리고 '토글 버튼' 객체를 Commentary Engine에 넘겨 깨웁니다!
-                            if (timelineData.chapters && timelineData.chapters.length > 0) {
-                                // 위에서 만든 commentaryToggleBtn 요소를 찾아서 함께 전달합니다.
-                                const toggleButton = document.getElementById(`commentary-toggle-${timelineData.videoId}`);
-                                CommentaryEngine.start(player, timelineData.chapters, toggleButton);
-                            }
+                            
+                            // [중요] 이 위치에 있던 CommentaryEngine.start(...) 호출은 삭제되었습니다.
                         }
                     }, 100);
                 }

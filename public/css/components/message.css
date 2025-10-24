@@ -487,3 +487,17 @@ body.dark-mode .timeline-segment-button.active {
     /* [핵심] 배경색이 부드럽게 변하도록 transition 추가 */
     transition: opacity 0.4s ease, background 0.25s linear; 
 }
+
+.timestamp-link {
+    background-color: var(--bg-active);
+    color: var(--text-light);
+    border: none;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+.timestamp-link:hover {
+    background-color: var(--accent-color);
+}

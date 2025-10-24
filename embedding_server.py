@@ -4,9 +4,10 @@ from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 import uvicorn
 import torch
-from typing import List
+from typing import List, Dict, Any
 import numpy as np
 from sklearn.cluster import KMeans
+from sklearn.metrics.pairwise import cosine_similarity
 import lancedb
 import os
 import subprocess
@@ -107,6 +108,19 @@ class TranscriptResponse(BaseModel):
 
 class YouTubeTranscriptRequest(BaseModel):
     url: str
+
+class SearchSegmentsRequest(BaseModel):
+    query: str
+    segments: List[Dict[str, Any]]
+
+class SearchResultItem(BaseModel):
+    index: int
+    text: str
+    start: float
+    score: float
+
+class SearchSegmentsResponse(BaseModel):
+    results: List[SearchResultItem]
 
 # --- 4. API 엔드포인트 생성 ---
 @app.post("/add", response_model=AddMemoryResponse)
@@ -309,6 +323,74 @@ async def rebuild_db(request: dict):
         print(f"ERROR: VectorDB 재구축 중 오류: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/search-segments", response_model=SearchSegmentsResponse)
+async def search_segments_fastapi(request: SearchSegmentsRequest):
+    if model is None:
+        raise HTTPException(status_code=503, detail="모델이 로드되지 않았습니다.")
+    try:
+        query = request.query
+        segments_data = request.segments
+
+        if not query or not segments_data:
+            raise HTTPException(status_code=400, detail="Query and segments data are required")
+
+        query_vector = model.encode([query])
+        segment_vectors = np.array([seg['vector'] for seg in segments_data])
+
+        similarities = cosine_similarity(query_vector, segment_vectors)[0]
+
+        # 유사도가 높은 순으로 정렬된 인덱스 (상위 5개)
+        top_indices = np.argsort(similarities)[::-1][:5]
+        
+        results = [{
+            "index": int(i),
+            "text": segments_data[i]["text"],
+            "start": segments_data[i]["start"],
+            "score": float(similarities[i])
+        } for i in top_indices if similarities[i] >= 0.3] # 관련 없는 결과 필터링
+
+        return {"results": results}
+
+    except Exception as e:
+        print(f"ERROR: 세그먼트 검색 중 오류: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/rebuild_db")
+async def rebuild_db(request: dict):
+    """
+    Node.js 서버로부터 받은 모든 기억 데이터를 기반으로 VectorDB를 완전히 재구축합니다.
+    """
+    global table
+    if model is None:
+        raise HTTPException(status_code=503, detail="모델이 로드되지 않았습니다.")
+    try:
+        memories_to_add = request.get('data', [])
+        if not memories_to_add:
+            raise HTTPException(status_code=400, detail="재구축할 데이터가 없습니다.")
+        
+        db_path = "./lancedb"
+        db_conn = lancedb.connect(db_path)
+        
+        table_name = "memories"
+        db_conn.drop_table(table_name, ignore_missing=True)
+        print(f"INFO: (Rebuild) 기존 '{table_name}' 테이블을 삭제했습니다.")
+        
+        print(f"INFO: (Rebuild) {len(memories_to_add)}개의 기억을 임베딩하는 중...")
+        texts_to_embed = [item['text'] for item in memories_to_add]
+        vectors = model.encode(texts_to_embed).tolist()
+        
+        data_for_lancedb = [
+            {"vector": vec, "id": mem['id'], "text": mem['text']}
+            for mem, vec in zip(memories_to_add, vectors)
+        ]
+
+        table = db_conn.create_table(table_name, data=data_for_lancedb, mode="overwrite")
+        print(f"INFO: (Rebuild) {len(data_for_lancedb)}개의 데이터로 '{table_name}' 테이블을 새로 생성했습니다.")
+        
+        return {"message": f"VectorDB 재구축 성공. {len(data_for_lancedb)}개의 기억 처리됨."}
+    except Exception as e:
+        print(f"ERROR: VectorDB 재구축 중 오류: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- 5. 서버 실행 ---
 if __name__ == "__main__":

@@ -2,8 +2,10 @@ import { appState } from '../state/AppState.js';
 import { getEmotionProfile, interpolateEmotionState } from '../utils/emotion-utils.js';
 
 export const CommentaryEngine = {
+    
     // --- 상태 변수 ---
     player: null,
+    videoId: null,
     chapters: [],
     intervalId: null,
     isOn: false,
@@ -25,7 +27,7 @@ export const CommentaryEngine = {
         this.isOn = true;
         this.currentEmotionState = getEmotionProfile('neutral');
         this.updateToggleButton();
-        console.log("🎙️ Commentary Engine v2.8 FINAL Started.");
+        console.log("🎙️ Commentary Engine v2.9.1 (Stable) Started.");
         
         document.getElementById('message-input').placeholder = "영상에 대해 루나에게 물어보세요...";
 
@@ -101,11 +103,12 @@ export const CommentaryEngine = {
     },
 
     async ask(question) {
-        if (!this.isOn || !this.player || typeof this.player.getCurrentTime !== 'function') return;
+        if (!this.isOn || !this.player || typeof this.player.getCurrentTime !== 'function') {
+            return;
+        }
 
         const currentTime = this.player.getCurrentTime();
         let currentSegment = null;
-
         for (const chapter of this.chapters) {
             for (const seg of chapter.segments) {
                 const nextSeg = chapter.segments[chapter.segments.indexOf(seg) + 1];
@@ -117,7 +120,7 @@ export const CommentaryEngine = {
             }
             if(currentSegment) break;
         }
-
+        
         if (!currentSegment) {
             this.showOverlayText("현재 장면에 대한 정보를 찾을 수 없어요.");
             return;
@@ -126,7 +129,6 @@ export const CommentaryEngine = {
         this.showOverlayText("루나가 생각 중입니다...");
 
         try {
-            // 1. 🟢 [추가] 현재 UI에서 선택된 모델 ID를 가져옵니다.
             const activeModelId = appState.sessions[appState.activeSessionId]?.model || 'gemini-flash-latest';
 
             const response = await fetch('/api/video-dialogue', {
@@ -134,15 +136,13 @@ export const CommentaryEngine = {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     question: question,
-                    segment: currentSegment,
+                    segment: currentSegment, // videoId 대신 segment를 다시 보냅니다.
                     emotionState: this.currentEmotionState,
-                    // 2. 🟢 [추가] 가져온 모델 ID를 함께 전송합니다.
                     modelId: activeModelId
                 }),
             });
             const data = await response.json();
 
-            // 3. 🟢 [수정] _speak 대신 playDialogueAudio를 사용합니다. (이전 버전에서 이름이 바뀌었네요, 제가 실수했습니다.)
             if (data.audioContent) {
                 this.playDialogueAudio(data.audioContent, data.answerText);
             } else {
@@ -162,8 +162,23 @@ export const CommentaryEngine = {
         audio.play();
         this.showOverlayText(text);
 
+        // [✅ v2.9 최종 수정] 루나의 말이 끝나면, 다음 행동을 결정합니다.
         audio.onended = () => {
+            // 1. 일단 영상은 다시 재생시킵니다.
             if (wasPlaying && this.player && typeof this.player.playVideo === 'function') {
+                this.player.playVideo();
+            }
+
+            // 2. 만약 '연속 대화 모드'가 켜져 있다면, '다시 듣기 시작' 신호를 보냅니다!
+            if (appState.settings.continuousConversationMode) {
+                console.log("🎙️ Continuous mode active. Requesting STT restart...");
+                document.dispatchEvent(new CustomEvent('start-listening-again'));
+            }
+        };
+
+        audio.onerror = () => {
+             console.error("오디오 재생 중 오류가 발생했습니다.");
+             if (wasPlaying && this.player && typeof this.player.playVideo === 'function') {
                 this.player.playVideo();
             }
         };
@@ -230,3 +245,5 @@ export const CommentaryEngine = {
         }
     }
 };
+
+window.CommentaryEngine = CommentaryEngine;

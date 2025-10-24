@@ -22,6 +22,18 @@ const cron = require('node-cron');
 const os = require('os');
 const dbManager = require('./database/db-manager');
 const vectorDBManager = require('./database/vector-db-manager');
+const videoMemoryCache = new Map();
+
+function sanitizeTextForTTS(text) {
+    if (!text) return '';
+    // 마크다운 문법을 제거하여 순수한 텍스트만 남깁니다.
+    return text
+        .replace(/#+\s/g, '') // 제목 표시(#) 제거
+        .replace(/\*\*(.*?)\*\*/g, '$1') // 굵은 글씨(**) 제거
+        .replace(/\*(.*?)\*/g, '$1') // 기울임 글씨(*) 제거
+        .replace(/`(.*?)`/g, '$1') // 인라인 코드(``) 제거
+        .replace(/^\s*[\-\*]\s/gm, ''); // 목록 표시(-, *) 제거
+}
 
 // --- 2. 전역 변수 및 상수 설정 ---
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -477,7 +489,7 @@ async function youtubeVideoAssistant({ query, summarize = true, display = true }
             // 🟢 1. [오류 제거] '요약 실패' 구간을 원천적으로 제거합니다. (가장 안정적인 방법)
             const validSegments = summarizedSegments.filter(seg => seg.summary !== '(요약 실패)');
             
-            // 🟢 2. [기능 업그레이드] 깨끗한 데이터로만 챕터를 만들고, AI가 제목을 만들 때까지 기다립니다(await).
+            // 2. [기존 로직] AI가 제목을 만들 때까지 기다립니다.
             finalResultPayload.chapters = await groupSegmentsIntoChapters(validSegments);
             console.log(`[Chapter Engine V2.1 INTEGRATED] Step 3 성공: ${finalResultPayload.chapters.length}개의 AI 제목 챕터를 생성했습니다.`);
 
@@ -2343,6 +2355,9 @@ app.post('/api/synthesize-speech', async (req, res) => {
         return res.status(500).json({ message: 'Google API 키가 서버에 설정되지 않았습니다.' });
     }
 
+    // ▼▼▼ [✅ 1단계 수정] 이 부분을 추가합니다 ▼▼▼
+    const cleanTextForTTS = sanitizeTextForTTS(text);
+
     const GOOGLE_TTS_URL = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${GOOGLE_API_KEY}`;
 
     try {
@@ -2350,7 +2365,8 @@ app.post('/api/synthesize-speech', async (req, res) => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                input: { text: text },
+                // ▼▼▼ [✅ 2단계 수정] input 객체의 text 값을 cleanTextForTTS로 바꿉니다 ▼▼▼
+                input: { text: cleanTextForTTS },
                 // WaveNet 기반의 자연스러운 한국어 여성 목소리
                 voice: { languageCode: 'ko-KR', name: 'ko-KR-Wavenet-A' }, 
                 audioConfig: { audioEncoding: 'MP3' }
@@ -2364,8 +2380,6 @@ app.post('/api/synthesize-speech', async (req, res) => {
         }
 
         const data = await response.json();
-        // data.audioContent는 Base64로 인코딩된 오디오 데이터입니다.
-        // 우리는 이것을 클라이언트로 그대로 전달합니다.
         res.json({ audioContent: data.audioContent });
 
     } catch (error) {
@@ -3105,13 +3119,17 @@ app.post('/api/generate-commentary', async (req, res) => {
             return res.status(400).json({ message: '필수 파라미터가 누락되었습니다.' });
         }
 
+        // ▼▼▼ [✅ 1단계 수정] 이 부분을 추가합니다 ▼▼▼
+        const cleanTextForTTS = sanitizeTextForTTS(text);
+
         const GOOGLE_TTS_URL = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${GOOGLE_API_KEY}`;
         
         const response = await fetch(GOOGLE_TTS_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                input: { text: text },
+                // ▼▼▼ [✅ 1단계 수정] text를 cleanTextForTTS로 바꿉니다 ▼▼▼
+                input: { text: cleanTextForTTS },
                 voice: { languageCode: 'ko-KR', name: voiceName || 'ko-KR-Wavenet-A' },
                 audioConfig: { 
                     audioEncoding: 'MP3',
@@ -3135,14 +3153,11 @@ app.post('/api/generate-commentary', async (req, res) => {
     }
 });
 
-// 🎙️ 하이브리드 영상 대화 통합 API
+// 🎙️ [v2.8.1 버전 복원] 하이브리드 영상 대화 통합 API
 app.post('/api/video-dialogue', async (req, res) => {
     try {
-        // ▼▼▼ [✅ 핵심] req.body에서 modelId를 추가로 받아옵니다. ▼▼▼
         const { question, segment, emotionState, modelId } = req.body;
         const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-
-        // ▼▼▼ [✅ 핵심] 하드코딩된 모델 이름 대신, 전달받은 modelId를 사용합니다. ▼▼▼
         const model = genAI.getGenerativeModel({ model: modelId || "gemini-flash-latest" });
 
         const prompt = `
@@ -3156,16 +3171,16 @@ app.post('/api/video-dialogue', async (req, res) => {
 [질문]
 "${question}"
 `;
-
         const result = await model.generateContent(prompt);
         const answerText = result.response.text();
+        const cleanAnswerForTTS = sanitizeTextForTTS(answerText);
 
         const GOOGLE_TTS_URL = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${GOOGLE_API_KEY}`;
         const ttsResponse = await fetch(GOOGLE_TTS_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                input: { text: answerText },
+                input: { text: cleanAnswerForTTS },
                 voice: { languageCode: 'ko-KR', name: 'ko-KR-Wavenet-A' },
                 audioConfig: { 
                     audioEncoding: 'MP3',
@@ -3174,7 +3189,6 @@ app.post('/api/video-dialogue', async (req, res) => {
                 }
             })
         });
-
         if (!ttsResponse.ok) throw new Error('TTS 생성 실패');
         const ttsData = await ttsResponse.json();
 
@@ -3196,11 +3210,6 @@ async function startServer() {
     // 1. 데이터베이스 테이블을 준비합니다.
     dbManager.initializeDatabase();
     
-    // 2. 혹시 놓친 작업이 있으면 실행합니다.
-    await checkAndRunDelayedJob(); // 메모리 프로파일러(3시) 지각 확인
-    await checkAndRunDelayedResearcherJob(); // 자율 연구원(7시) 지각 확인
-    await checkAndRunDelayedGardenerJob(); // 기억 정원사 (자정) 지각 확인
-
     // 3. 모든 준비가 끝나면 서버를 시작합니다.
     console.log('[Server Startup] 모든 준비가 완료되었습니다. 웹 서버를 실행합니다.');
     try {
@@ -3221,6 +3230,16 @@ async function startServer() {
             exec(`${start} ${url}`);
         });
     }
+
+    // 3. ▼▼▼ [✅ 최종 수정] 서버가 켜진 후에, 백그라운드에서 밀린 숙제를 시작합니다. ▼▼▼
+    // 약간의 지연(예: 2초)을 주어 서버가 완전히 안정될 시간을 줍니다.
+    setTimeout(async () => {
+        console.log('[Background Jobs] 서버 시작 후 지연된 작업들을 확인합니다...');
+        await checkAndRunDelayedJob();       // 메모리 프로파일러(3시) 지각 확인
+        await checkAndRunDelayedResearcherJob(); // 자율 연구원(7시) 지각 확인
+        await checkAndRunDelayedGardenerJob();   // 기억 정원사 (자정) 지각 확인
+        console.log('[Background Jobs] 모든 지연된 작업 확인이 완료되었습니다.');
+    }, 2000);
 }
 
 // ▼▼▼▼▼ 바로 이 부분을 임시로 추가해주세요 ▼▼▼▼▼
