@@ -3026,7 +3026,7 @@ app.get('/api/emotion-meta', (req, res) => {
     }
 });
 
-// ✨ 13차 진화 (자율 루프): 사용자 설정을 위한 API
+// (자율 루프) : 사용자 설정을 위한 API
 // 현재 '집중 시간' 설정을 가져오는 API
 app.get('/api/settings/focus-minutes', (req, res) => {
     try {
@@ -3054,7 +3054,7 @@ app.post('/api/settings/focus-minutes', (req, res) => {
     }
 });
 
-// ✨ 13차 진화 (자율 루프): '공부' 활동을 시작하는 API
+// (자율 루프) : '공부' 활동을 시작하는 API
 app.post('/api/activity/start', (req, res) => {
     try {
         const { activityType, notes } = req.body;
@@ -3075,7 +3075,7 @@ app.post('/api/activity/start', (req, res) => {
     }
 });
 
-// ✨ 13차 진화 (자율 루프): '공부' 활동을 종료하는 API
+// (자율 루프) : '공부' 활동을 종료하는 API
 app.post('/api/activity/finish', (req, res) => {
     try {
         const { logId } = req.body;
@@ -3096,6 +3096,54 @@ app.post('/api/activity/finish', (req, res) => {
     }
 });
 
+// 🎙️ AI 감정 해설 TTS 엔진
+app.post('/api/generate-commentary', async (req, res) => {
+    try {
+        const { text, emotion } = req.body;
+        if (!text || !GOOGLE_API_KEY) {
+            return res.status(400).json({ message: '텍스트와 API 키가 필요합니다.' });
+        }
+
+        // [ChatGPT 제안 채택] 감정별 음성 프로필
+        const voiceProfiles = {
+          calm:      { name: 'ko-KR-Wavenet-A', ssmlGender: 'FEMALE', pitch: 0.0,   speakingRate: 1.0 },
+          tense:     { name: 'ko-KR-Wavenet-B', ssmlGender: 'MALE',   pitch: -3.0,  speakingRate: 1.05 },
+          emotional: { name: 'ko-KR-Wavenet-D', ssmlGender: 'FEMALE', pitch: -1.5,  speakingRate: 0.95 },
+          funny:     { name: 'ko-KR-Wavenet-C', ssmlGender: 'FEMALE', pitch: 2.0,   speakingRate: 1.15 },
+          excited:   { name: 'ko-KR-Wavenet-C', ssmlGender: 'FEMALE', pitch: 3.5,   speakingRate: 1.2 },
+          sad:       { name: 'ko-KR-Wavenet-B', ssmlGender: 'MALE',   pitch: -4.0,  speakingRate: 0.9 },
+        };
+        const selected = voiceProfiles[emotion] || voiceProfiles.calm;
+
+        const GOOGLE_TTS_URL = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${GOOGLE_API_KEY}`;
+        
+        const response = await fetch(GOOGLE_TTS_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                input: { text: text },
+                voice: { languageCode: 'ko-KR', name: selected.name, ssmlGender: selected.ssmlGender },
+                audioConfig: { 
+                    audioEncoding: 'MP3',
+                    pitch: selected.pitch,
+                    speakingRate: selected.speakingRate,
+                }
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(`Google TTS API 요청 실패: ${JSON.stringify(errorData)}`);
+        }
+
+        const data = await response.json();
+        res.json({ audioContent: data.audioContent }); // Base64로 인코딩된 오디오를 그대로 전달
+
+    } catch (err) {
+        console.error('v2.6 Commentary TTS Error:', err);
+        res.status(500).json({ message: `음성 해설 생성 중 오류: ${err.message}` });
+    }
+});
 
 // --- 7. 서버 실행 (가장 마지막에!) ---
 async function startServer() {

@@ -5,6 +5,7 @@ import * as CodeBlock from './CodeBlock.js';
 import * as CodeSummary from './CodeSummary.js';
 import * as PdfSummary from './PdfSummary.js';
 import { StudyLoop } from '../controllers/StudyLoop.js';
+import { CommentaryEngine } from '../controllers/CommentaryEngine.js'; 
 
 function formatCompletionTime(timestamp) {
     const now = new Date();
@@ -131,6 +132,7 @@ function renderMessageParts(parts, role, receivedAt) {
                     // 4. 플레이어 생성 및 스크롤 싱크 이벤트 연결 (기존과 동일)
                     setTimeout(() => {
                         if (window.YT && window.YT.Player) {
+                            // 1. 기존과 동일하게 플레이어를 생성합니다.
                             player = new window.YT.Player(playerId, {
                                 videoId: timelineData.videoId,
                                 width: '100%',
@@ -158,6 +160,11 @@ function renderMessageParts(parts, role, receivedAt) {
                                     }
                                 }
                             });
+
+                            // 2. 🟢 [핵심 추가] 방금 만든 플레이어와 챕터 데이터로 Commentary Engine을 깨웁니다!
+                            if (timelineData.chapters && timelineData.chapters.length > 0) {
+                                CommentaryEngine.start(player, timelineData.chapters);
+                            }
                         }
                     }, 100);
                 }

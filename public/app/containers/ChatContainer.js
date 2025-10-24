@@ -2,6 +2,7 @@
 import { $, $$ } from '../../utils/dom.js';
 import { createDOMElement } from '../../components/common.js';
 import { appState } from '../state/AppState.js';
+import { CommentaryEngine } from '../controllers/CommentaryEngine.js'; 
 import { getCategorizedModels } from '../state/ModelManager.js';
 import { manage as manageThinkingIndicatorHelper } from '../components/ThinkingIndicator.js';
 import { create as createMessageElement } from '../components/Message.js';
@@ -226,6 +227,8 @@ export function init() {
 
 function _updateViewForSession(newSessionId) {
     if (isTransitioning) return;
+
+    CommentaryEngine.stop();
 
     const parentContainer = elements.chatBox;
     const outgoingView = parentContainer.querySelector('.message-list-container[style*="display: flex"]');

@@ -422,3 +422,42 @@ body.dark-mode .timeline-segment-button:hover {
 body.dark-mode .timeline-segment-button.active {
     background-color: var(--bg-active);
 }
+
+/* --- 🎙️ v2.6 AI Commentary & Emotion Bar --- */
+#ai-commentary-overlay {
+  position: fixed; /* 화면 전체에 고정 */
+  bottom: 80px; /* 입력창보다 약간 위에 */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  
+  background: rgba(20, 20, 20, 0.75);
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: 12px;
+  font-size: 1rem;
+  font-weight: 500;
+  max-width: 80%;
+  text-align: center;
+
+  opacity: 0;
+  transition: opacity 0.6s ease, transform 0.4s ease;
+  pointer-events: none; /* 클릭 방해하지 않도록 */
+}
+
+#ai-commentary-overlay.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(-10px); /* 살짝 떠오르는 효과 */
+}
+
+#emotion-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 5px;
+  z-index: 101;
+  background: linear-gradient(90deg, #4fc3f7, #81c784);
+  transition: background 0.8s ease;
+  pointer-events: none;
+}
