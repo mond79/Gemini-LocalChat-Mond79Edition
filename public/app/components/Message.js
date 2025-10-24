@@ -82,32 +82,45 @@ function renderMessageParts(parts, role, receivedAt) {
                     let player;
                     let timelineInterval; // 스크롤 싱크를 위한 인터벌 ID 저장 변수
 
-                    // 3. 구간별 요약 타임라인 생성 (요약 데이터가 있을 경우)
-                    if (timelineData.summaries && timelineData.summaries.length > 0) {
-                        const segmentsContainer = createDOMElement('div', { className: 'timeline-segments-container' });
-                        segmentsContainer.id = `timeline-segments-${playerId}`; // 각 타임라인에 고유 ID 부여
-                        
-                        timelineData.summaries.forEach((segment, index) => {
-                            const segmentButton = createDOMElement('button', { 
-                                className: `timeline-segment-button highlight-${segment.emotion_tag || 'neutral'}`, // <<< [감정 하이라이트]
-                                'data-start-time': segment.start,
-                                'data-segment-index': index // 스크롤 싱크를 위해 인덱스 저장
-                            });
-                            
-                            const time = new Date(segment.start * 1000).toISOString().substr(14, 5);
-                            segmentButton.innerHTML = `<span class="segment-time">${time}</span> <span class="segment-summary">${segment.summary}</span>`;
-                            
-                            segmentButton.addEventListener('click', () => {
-                                if (player && player.seekTo) {
-                                    player.seekTo(segment.start, true);
-                                    player.playVideo();
-                                }
-                            });
-                            segmentsContainer.appendChild(segmentButton);
-                        });
-                        partContent.appendChild(segmentsContainer);
-                    }
+                    // ▼▼▼ [핵심 업그레이드] 'chapters' 배열을 렌더링합니다. ▼▼▼
+                    if (timelineData.chapters && timelineData.chapters.length > 0) {
+                        const chaptersContainer = createDOMElement('div', { className: 'timeline-chapters-container' });
+                        chaptersContainer.id = `timeline-chapters-${playerId}`; // 스크롤 싱크를 위한 고유 ID
 
+                        // 각 '챕터'를 순회합니다.
+                        timelineData.chapters.forEach(chapter => {
+                            const chapterBlock = createDOMElement('div', { className: 'chapter-block' });
+
+                            // 1. 챕터 헤더 (이모지 + 제목) 생성
+                            const chapterHeader = createDOMElement('div', { 
+                                className: 'chapter-header',
+                                style: `border-left-color: ${chapter.color};` // 감정 색상 적용
+                            });
+                            chapterHeader.innerHTML = `<span class="chapter-emoji">${chapter.emoji}</span><span class="chapter-title">${chapter.title}</span>`;
+                            chapterBlock.appendChild(chapterHeader);
+                            
+                            // 2. 챕터에 속한 '세그먼트(구간)'들을 순회합니다.
+                            chapter.segments.forEach(segment => {
+                                const segmentButton = createDOMElement('button', { 
+                                    className: 'timeline-segment-button',
+                                    'data-start-time': segment.start
+                                });
+                                
+                                const time = new Date(segment.start * 1000).toISOString().substr(14, 5);
+                                segmentButton.innerHTML = `<span class="segment-time">${time}</span><span class="segment-summary">${segment.summary}</span>`;
+                                
+                                segmentButton.addEventListener('click', () => {
+                                    if (player && player.seekTo) {
+                                        player.seekTo(segment.start, true);
+                                        player.playVideo();
+                                    }
+                                });
+                                chapterBlock.appendChild(segmentButton);
+                            });
+                            chaptersContainer.appendChild(chapterBlock);
+                        });
+                        partContent.appendChild(chaptersContainer);
+                    }
                     // 4. 플레이어 생성 및 '스크롤 싱크' 이벤트 연결
                     setTimeout(() => {
                         if (window.YT && window.YT.Player) {
@@ -118,33 +131,31 @@ function renderMessageParts(parts, role, receivedAt) {
                                 events: {
                                     'onStateChange': (event) => {
                                         if (timelineInterval) clearInterval(timelineInterval);
-
                                         if (event.data === window.YT.PlayerState.PLAYING) {
                                             timelineInterval = setInterval(() => {
                                                 const currentTime = player.getCurrentTime();
-                                                const allSegmentButtons = document.querySelectorAll(`#timeline-segments-${playerId} .timeline-segment-button`);
+                                                const allSegmentButtons = document.querySelectorAll(`#timeline-chapters-${playerId} .timeline-segment-button`);
                                                 
-                                                let activeIndex = -1;
-                                                // 현재 시간에 맞는 구간을 찾습니다.
-                                                for (let i = 0; i < timelineData.summaries.length; i++) {
-                                                    const segment = timelineData.summaries[i];
-                                                    const nextSegment = timelineData.summaries[i + 1];
-                                                    const segmentEndTime = nextSegment ? nextSegment.start : player.getDuration();
-                                                    if (currentTime >= segment.start && currentTime < segmentEndTime) {
-                                                        activeIndex = i;
-                                                        break;
-                                                    }
-                                                }
+                                                let activeSegmentFound = false;
+                                                // 모든 챕터와 세그먼트를 순회하며 활성화할 버튼을 찾습니다.
+                                                timelineData.chapters.forEach(ch => {
+                                                    ch.segments.forEach((seg, idx) => {
+                                                        const button = Array.from(allSegmentButtons).find(btn => parseFloat(btn.dataset.startTime) === seg.start);
+                                                        if (!button) return;
 
-                                                // 모든 버튼의 active 클래스를 업데이트합니다.
-                                                allSegmentButtons.forEach((button, index) => {
-                                                    if (index === activeIndex) {
-                                                        button.classList.add('active');
-                                                    } else {
-                                                        button.classList.remove('active');
-                                                    }
+                                                        const nextSeg = ch.segments[idx + 1];
+                                                        const segmentEndTime = nextSeg ? nextSeg.start : seg.end + 30; // 대략적인 종료 시간
+                                                        
+                                                        if (currentTime >= seg.start && currentTime < segmentEndTime) {
+                                                            button.classList.add('active');
+                                                            activeSegmentFound = true;
+                                                        } else {
+                                                            button.classList.remove('active');
+                                                        }
+                                                    });
                                                 });
-                                            }, 500); // 0.5초마다 체크
+
+                                            }, 500);
                                         }
                                     }
                                 }

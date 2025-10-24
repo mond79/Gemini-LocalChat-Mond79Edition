@@ -317,3 +317,54 @@ body.dark-mode .timeline-segment-button.active .segment-time,
 body.dark-mode .timeline-segment-button.active .segment-summary {
     color: #f2f2f7; /* 다크 모드에서의 가장 밝은 텍스트 색상 */
 }
+
+/* --- YouTube Chapter UI Styles --- */
+
+.chapter-block {
+    margin-top: 16px;
+}
+
+.chapter-header {
+    display: flex;
+    align-items: center;
+    font-weight: 600;
+    margin-bottom: 8px;
+    font-size: 1.05em;
+    color: var(--text-color);
+    border-left: 4px solid var(--border-color); /* 기본 색상 */
+    padding-left: 10px;
+    gap: 8px; /* 이모지와 제목 사이 간격 */
+}
+
+.chapter-emoji {
+    font-size: 1.2em;
+}
+
+/* 기존 타임라인 버튼 스타일은 거의 그대로 사용됩니다. */
+.timeline-segment-button {
+    background-color: transparent;
+    border-left-width: 4px;
+    border-left-color: transparent; /* 평소에는 왼쪽 테두리 숨김 */
+    padding-left: 14px; /* 헤더와 들여쓰기 맞춤 */
+}
+
+.timeline-segment-button:hover {
+    background-color: var(--hover-color);
+}
+
+.timeline-segment-button.active {
+    background-color: var(--primary-color-bg);
+}
+
+/* 다크 모드 스타일 보강 */
+body.dark-mode .chapter-header {
+    color: #f2f2f7;
+}
+
+body.dark-mode .timeline-segment-button:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+body.dark-mode .timeline-segment-button.active {
+    background-color: rgba(58, 118, 240, 0.25);
+}

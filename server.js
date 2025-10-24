@@ -353,29 +353,73 @@ async function displayYoutubeVideo({ videoId }) {
 }
 
 async function youtubeVideoAssistant({ query, summarize = true, display = true }) {
-    console.log(`[Timeline Engine] 타임라인 요약 시작. 검색어: "${query}"`);
+    console.log(`[Chapter Engine V2] 챕터링 요약 시작. 검색어: "${query}"`);
+
+    // --- [ChatGPT 설계] 안정화된 감정 기반 챕터링 엔진 ---
+    const detectEmotion = (text = "") => {
+        const lower = text.toLowerCase();
+        if (lower.includes("웃음") || lower.includes("재미") || lower.includes("ㅋㅋ")) return "happy";
+        if (lower.includes("요리") || lower.includes("만들") || lower.includes("긴장")) return "tense";
+        if (lower.includes("춤") || lower.includes("노래") || lower.includes("게임")) return "action";
+        if (lower.includes("대화") || lower.includes("이야기")) return "dialogue";
+        return "neutral";
+    };
+
+    function groupSegmentsIntoChapters(segments = []) {
+        if (!Array.isArray(segments) || segments.length === 0) {
+            console.warn("[Chapter Engine] 그룹화할 세그먼트 데이터가 비어 있습니다.");
+            return [];
+        }
+
+        const chapters = [];
+        let currentGroup = [];
+        let currentEmotion = (segments[0] && segments[0].emotion_tag) ? segments[0].emotion_tag : 'neutral';
+
+        for (const seg of segments) {
+            if (!seg || !seg.summary) continue;
+
+            const emotion = seg.emotion_tag;
+            if (emotion !== currentEmotion && currentGroup.length > 0) {
+                chapters.push({ emotion: currentEmotion, segments: currentGroup });
+                currentGroup = [];
+            }
+            currentEmotion = emotion;
+            currentGroup.push(seg);
+        }
+
+        if (currentGroup.length > 0) {
+            chapters.push({ emotion: currentEmotion, segments: currentGroup });
+        }
+
+        const colorMap = { happy: "#4caf50", tense: "#f44336", action: "#ff9800", dialogue: "#2196f3", neutral: "#9e9e9e", error: "#9e9e9e" };
+        const emojiMap = { happy: "😂", tense: "🔥", action: "🕹️", dialogue: "💬", neutral: "📄", error: "⚠️" };
+        const titleMap = { happy: "즐거운 순간", tense: "긴장 & 집중", action: "액션 & 게임", dialogue: "대화 & 스토리", neutral: "일반 정보", error: "오류 구간" };
+
+        return chapters.map((ch) => ({
+            title: titleMap[ch.emotion] || "기타",
+            emotion: ch.emotion,
+            color: colorMap[ch.emotion] || "#9e9e9e",
+            emoji: emojiMap[ch.emotion] || "📄",
+            segments: ch.segments,
+        }));
+    }
 
     try {
-        // 1. getYoutubeTranscript 함수를 통해 구조화된 자막 데이터를 가져옵니다.
-        console.log('[Timeline Engine] Step 1: getYoutubeTranscript 함수를 통해 자막 데이터를 요청합니다.');
         const urlToProcess = (query.startsWith('http')) ? query : query;
         const transcriptData = await getYoutubeTranscript({ url: urlToProcess });
-        const { video_id, segments, message } = transcriptData;
 
-        let finalResultPayload = {
-            videoId: video_id,
-            overview: "",
-            summaries: [],
-            fallback_summary: ""
-        };
+        const videoIdMatch = query.match(/v=([a-zA-Z0-9_-]{11})/);
+        const video_id = transcriptData.video_id || (videoIdMatch ? videoIdMatch[1] : null);
 
-        // 2. 자막(segments)이 존재하는지 확인하고 분기합니다.
+        if (!video_id) throw new Error("영상 ID를 확인할 수 없습니다.");
+
+        let finalResultPayload = { videoId: video_id, overview: "", chapters: [], fallback_summary: "" };
+        const { segments, message } = transcriptData;
+
         if (segments && segments.length > 0 && summarize) {
-            console.log(`[Timeline Engine V2] 플랜 A: ${segments.length}개의 세그먼트로 분석을 시작합니다.`);
             const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
             const model = genAI.getGenerativeModel({ model: 'gemini-flash-lite-latest' });
 
-            // [새로운 기능 1. '개요' 생성]
             const fullTranscript = segments.map(s => s.text).join(' ');
             const overviewPrompt = `다음 영상 자막 전체를 보고, 이 영상의 주제와 분위기를 2~3 문장으로 간결하게 '개요'를 작성해줘:\n\n"${fullTranscript}"`;
             try {
@@ -383,11 +427,9 @@ async function youtubeVideoAssistant({ query, summarize = true, display = true }
                 finalResultPayload.overview = overviewResult.response.text().trim();
                 console.log('[Timeline Engine V2] Step 1: 영상 전체 개요 생성 성공.');
             } catch (e) {
-                console.error(`[Timeline Engine V2] 개요 생성 중 오류: ${e.message}`);
                 finalResultPayload.overview = "영상 전체 개요를 생성하는 데 실패했습니다.";
             }
 
-            // [기존 기능 + 새로운 기능 2. '구간별 요약' 및 '감정 태그' 생성]
             const CHUNK_DURATION = 30;
             const chunks = [];
             let currentChunk = null;
@@ -401,35 +443,25 @@ async function youtubeVideoAssistant({ query, summarize = true, display = true }
             }
             if (currentChunk && currentChunk.text.trim()) chunks.push(currentChunk);
 
-            console.log('[Timeline Engine V2] Step 2: 각 청크를 Gemini API에 보내 요약 및 감정 분석을 요청합니다.');
             const summaryPromises = chunks.map(async (chunk) => {
                 const summaryPrompt = `다음 텍스트는 영상의 한 장면입니다. 이 장면의 핵심 내용을 한 문장으로 간결하게 요약해줘:\n\n"${chunk.text}"`;
                 try {
                     const result = await model.generateContent(summaryPrompt);
                     const summary = result.response.text().trim().replace(/"/g, '');
-                    
-                    // [감정 태그 분석 로직]
-                    let emotion_tag = 'neutral';
-                    if (summary.includes('춤') || summary.includes('게임') || summary.includes('플레이')) emotion_tag = 'action';
-                    else if (summary.includes('웃음') || summary.includes('재미') || summary.includes('즐거워')) emotion_tag = 'happy';
-                    else if (summary.includes('어려워') || summary.includes('힘들어') || summary.includes('당황')) emotion_tag = 'tense';
-                    else if (summary.includes('대화') || summary.includes('이야기') || summary.includes('소개')) emotion_tag = 'dialogue';
-
-                    return { 
-                        start: Math.floor(chunk.start), 
-                        summary: summary,
-                        emotion_tag: emotion_tag
-                    };
+                    const emotion_tag = detectEmotion(summary);
+                    return { start: Math.floor(chunk.start), summary, emotion_tag };
                 } catch (e) {
                     return { start: Math.floor(chunk.start), summary: "(요약 실패)", emotion_tag: 'error' };
                 }
             });
-            finalResultPayload.summaries = await Promise.all(summaryPromises);
-            console.log(`[Timeline Engine V2] Step 2 성공: ${finalResultPayload.summaries.length}개의 구간 요약 및 감정 분석을 완료했습니다.`);
+            const summarizedSegments = await Promise.all(summaryPromises);
+            console.log(`[Timeline Engine V2] Step 2 성공: ${summarizedSegments.length}개의 구간 요약 완료.`);
+            
+            finalResultPayload.chapters = groupSegmentsIntoChapters(summarizedSegments);
+            console.log(`[Chapter Engine] Step 3 성공: ${finalResultPayload.chapters.length}개의 챕터를 생성했습니다.`);
 
         } else if (summarize) {
-            // [플랜 B] 자막은 없지만, 요약을 원한 경우
-            console.log(`[Timeline Engine] 플랜 B: 자막 없음. scrapeWebsite를 이용한 기본 요약을 시도합니다.`);
+            console.log(`[Timeline Engine V2] 플랜 B: 자막 없음. scrapeWebsite를 이용한 기본 요약을 시도합니다.`);
             const scrapedContent = await scrapeWebsite({ url: `https://www.youtube.com/watch?v=${video_id}` });
             const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
             const model = genAI.getGenerativeModel({ model: 'gemini-flash-lite-latest' });
@@ -438,26 +470,20 @@ async function youtubeVideoAssistant({ query, summarize = true, display = true }
             finalResultPayload.fallback_summary = result.response.text().trim() + `\n(${message || '자막 정보 없음'})`;
         }
         
-        // 3. 최종 결과물을 비밀 코드와 함께 반환합니다.
-        // display가 true일 때만 TIMELINE_DATA 신호를 보내고,
-        // 그렇지 않으면(예: 요약만 요청한 경우) 텍스트 결과만 반환합니다.
         if (!display) {
-            // 요약이 성공했으면 요약 내용을, 아니면 폴백 요약을, 그것도 없으면 기본 메시지를 반환
-            if (finalResultPayload.summaries.length > 0) {
-                return "구간별 요약이 완료되었습니다. 타임라인을 보려면 다시 요청해주세요.";
+            if (finalResultPayload.chapters.length > 0) {
+                return "구간별 요약 및 챕터링이 완료되었습니다. 타임라인을 보려면 다시 요청해주세요.";
             }
             return finalResultPayload.fallback_summary || "영상에 대한 정보를 처리했습니다.";
         }
         return `[TIMELINE_DATA]:::${JSON.stringify(finalResultPayload)}`;
 
     } catch (error) {
-        // 이 함수가 실패하더라도, 만약 display 옵션이 켜져 있었다면
-        // 어떻게든 영상이라도 보여주려고 시도합니다. 이것이 최종 안전장치입니다.
         if (display) {
             console.warn(`[Timeline Engine] 오류 발생으로 폴백 실행: 영상 플레이어만이라도 표시합니다.`);
             const videoIdMatch = query.match(/v=([a-zA-Z0-9_-]{11})/);
             if (videoIdMatch && videoIdMatch[1]) {
-                return `[TIMELINE_DATA]:::${JSON.stringify({ videoId: videoIdMatch[1], summaries: [], fallback_summary: "죄송합니다. 영상 정보를 처리하는 데 실패했습니다. 대신 영상만 보여드릴게요." })}`;
+                return `[TIMELINE_DATA]:::${JSON.stringify({ videoId: videoIdMatch[1], chapters: [], fallback_summary: "죄송합니다. 영상 정보를 처리하는 데 실패했습니다. 대신 영상만 보여드릴게요." })}`;
             }
         }
         const detail = error.response?.data?.detail || error.message;
