@@ -318,53 +318,107 @@ body.dark-mode .timeline-segment-button.active .segment-summary {
     color: #f2f2f7; /* 다크 모드에서의 가장 밝은 텍스트 색상 */
 }
 
-/* --- YouTube Chapter UI Styles --- */
+/* --- YouTube Chapter UI Styles (v2.1 FINAL) --- */
+.timeline-container {
+    margin-top: 12px;
+    margin-bottom: 12px;
+    max-width: 560px; /* 영상 플레이어와 너비 통일 */
+    width: 100%;
+}
+
+.timeline-overview {
+    background: var(--bg-sidebar);
+    border-left: 4px solid var(--accent-color);
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    border-radius: 6px;
+}
+.timeline-overview h3 { margin: 0 0 8px 0; font-size: 1em; font-weight: bold;}
+.timeline-overview p { margin: 0; }
+
+.youtube-player-container {
+    margin-bottom: 12px;
+    aspect-ratio: 16 / 9;
+    background-color: #000;
+    border-radius: 8px;
+    overflow: hidden;
+}
 
 .chapter-block {
-    margin-top: 16px;
+    margin-top: 22px;
 }
 
 .chapter-header {
     display: flex;
     align-items: center;
-    font-weight: 600;
-    margin-bottom: 8px;
-    font-size: 1.05em;
-    color: var(--text-color);
-    border-left: 4px solid var(--border-color); /* 기본 색상 */
-    padding-left: 10px;
-    gap: 8px; /* 이모지와 제목 사이 간격 */
+    gap: 10px;
+    margin-bottom: 12px;
+    padding-left: 12px;
+
+    /* [✅ ChatGPT 제안 채택] 더 굵고 명확한 헤더 스타일 */
+    font-weight: 700;
+    font-size: 1.15em;
+    letter-spacing: -0.3px;
+    color: var(--text-primary);
+    border-left: 5px solid; /* 색상은 JS에서 인라인으로 적용 */
 }
 
 .chapter-emoji {
-    font-size: 1.2em;
+    font-size: 1.3em;
+    line-height: 1;
 }
 
-/* 기존 타임라인 버튼 스타일은 거의 그대로 사용됩니다. */
 .timeline-segment-button {
-    background-color: transparent;
-    border-left-width: 4px;
-    border-left-color: transparent; /* 평소에는 왼쪽 테두리 숨김 */
-    padding-left: 14px; /* 헤더와 들여쓰기 맞춤 */
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: calc(100% - 25px); /* [✅ 핵심] 너비를 줄여 들여쓰기 효과 */
+    margin-left: 25px;       /* [✅ 핵심] 챕터에 종속된 느낌을 주는 들여쓰기 */
+    padding: 8px 12px;
+    margin-bottom: 4px;
+    border: none;
+    border-radius: 6px;
+    background-color: var(--bg-hover); /* 기본 배경색 살짝 추가 */
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+    font-size: 0.9em;
+    transition: background-color 0.2s, box-shadow 0.2s;
 }
-
 .timeline-segment-button:hover {
-    background-color: var(--hover-color);
+    background-color: var(--bg-message-user);
 }
 
 .timeline-segment-button.active {
-    background-color: var(--primary-color-bg);
+    background-color: var(--bg-active);
+    box-shadow: inset 2px 0 0 0 var(--accent-color); /* 활성화 시 왼쪽 테두리 효과 */
 }
 
-/* 다크 모드 스타일 보강 */
-body.dark-mode .chapter-header {
-    color: #f2f2f7;
+.segment-time {
+    font-weight: 500;
+    color: var(--text-secondary);
 }
 
+.segment-summary {
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-grow: 1;
+}
+
+.segment-summary-failed {
+    font-style: italic;
+    color: var(--text-tertiary); /* '...' 텍스트 색상을 더 연하게 */
+}
+
+/* 다크모드 대응 강화 */
+body.dark-mode .timeline-segment-button {
+    background-color: rgba(255, 255, 255, 0.05);
+}
 body.dark-mode .timeline-segment-button:hover {
-    background-color: rgba(255, 255, 255, 0.08);
+    background-color: rgba(255, 255, 255, 0.1);
 }
-
 body.dark-mode .timeline-segment-button.active {
-    background-color: rgba(58, 118, 240, 0.25);
+    background-color: var(--bg-active);
 }

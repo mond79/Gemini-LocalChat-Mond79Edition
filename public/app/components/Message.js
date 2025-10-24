@@ -55,73 +55,80 @@ function renderMessageParts(parts, role, receivedAt) {
                 break;
 
             case 'youtube_timeline':
-                if (part.data && part.data.videoId) {
-                    const timelineData = part.data;
-                    partContent = createDOMElement('div', { className: 'timeline-container' });
+    if (part.data && part.data.videoId) {
+        const timelineData = part.data;
+        partContent = createDOMElement('div', { className: 'timeline-container' });
 
-                    // ▼▼▼ [1. '상단 개요' 렌더링] ▼▼▼
-                    if (timelineData.overview) {
-                        const overviewContainer = createDOMElement('div', { className: 'timeline-overview' });
-                        overviewContainer.innerHTML = `<h3>📘 영상 개요</h3>${window.marked.parse(timelineData.overview)}`;
-                        partContent.appendChild(overviewContainer);
-                    }
+        // 1. 상단 개요 렌더링 (기존과 동일)
+        if (timelineData.overview) {
+            const overviewContainer = createDOMElement('div', { className: 'timeline-overview' });
+            overviewContainer.innerHTML = `<h3>📘 영상 개요</h3>${window.marked.parse(timelineData.overview)}`;
+            partContent.appendChild(overviewContainer);
+        }
 
-                    // (자막 없는 영상의 '폴백 요약'도 '개요' 형식으로 함께 표시)
-                    if (timelineData.fallback_summary) {
-                        const fallbackContainer = createDOMElement('div', { className: 'timeline-overview' }); // 같은 스타일 적용
-                        fallbackContainer.innerHTML = `<h3>⚠️ 요약 정보</h3>${window.marked.parse(timelineData.fallback_summary)}`;
-                        partContent.appendChild(fallbackContainer);
-                    }
+        // 2. 자막 없는 영상의 폴백 요약 렌더링 (기존과 동일)
+        if (timelineData.fallback_summary) {
+            const fallbackContainer = createDOMElement('div', { className: 'timeline-overview' });
+            fallbackContainer.innerHTML = `<h3>⚠️ 요약 정보</h3>${window.marked.parse(timelineData.fallback_summary)}`;
+            partContent.appendChild(fallbackContainer);
+        }
 
-                    // 2. 유튜브 플레이어 생성
-                    const playerContainer = createDOMElement('div', { className: 'youtube-player-container' });
-                    const playerId = `yt-player-${timelineData.videoId}-${Date.now()}`;
-                    playerContainer.id = playerId;
-                    partContent.appendChild(playerContainer);
+        // 3. 유튜브 플레이어 생성 (기존과 동일)
+        const playerContainer = createDOMElement('div', { className: 'youtube-player-container' });
+        const playerId = `yt-player-${timelineData.videoId}-${Date.now()}`;
+        playerContainer.id = playerId;
+        partContent.appendChild(playerContainer);
 
-                    let player;
-                    let timelineInterval; // 스크롤 싱크를 위한 인터벌 ID 저장 변수
+        let player;
+        let timelineInterval;
 
-                    // ▼▼▼ [핵심 업그레이드] 'chapters' 배열을 렌더링합니다. ▼▼▼
-                    if (timelineData.chapters && timelineData.chapters.length > 0) {
-                        const chaptersContainer = createDOMElement('div', { className: 'timeline-chapters-container' });
-                        chaptersContainer.id = `timeline-chapters-${playerId}`; // 스크롤 싱크를 위한 고유 ID
+        // --- [✅ 핵심 업그레이드] '챕터' 배열을 렌더링하는 최종 로직 ---
+        if (timelineData.chapters && timelineData.chapters.length > 0) {
+            const chaptersContainer = createDOMElement('div', { className: 'timeline-chapters-container' });
+            chaptersContainer.id = `timeline-chapters-${playerId}`;
 
-                        // 각 '챕터'를 순회합니다.
-                        timelineData.chapters.forEach(chapter => {
-                            const chapterBlock = createDOMElement('div', { className: 'chapter-block' });
+            // 각 '챕터'를 순회하며 렌더링
+            timelineData.chapters.forEach(chapter => {
+                const chapterBlock = createDOMElement('div', { className: 'chapter-block' });
 
-                            // 1. 챕터 헤더 (이모지 + 제목) 생성
-                            const chapterHeader = createDOMElement('div', { 
-                                className: 'chapter-header',
-                                style: `border-left-color: ${chapter.color};` // 감정 색상 적용
-                            });
-                            chapterHeader.innerHTML = `<span class="chapter-emoji">${chapter.emoji}</span><span class="chapter-title">${chapter.title}</span>`;
-                            chapterBlock.appendChild(chapterHeader);
-                            
-                            // 2. 챕터에 속한 '세그먼트(구간)'들을 순회합니다.
-                            chapter.segments.forEach(segment => {
-                                const segmentButton = createDOMElement('button', { 
-                                    className: 'timeline-segment-button',
-                                    'data-start-time': segment.start
-                                });
-                                
-                                const time = new Date(segment.start * 1000).toISOString().substr(14, 5);
-                                segmentButton.innerHTML = `<span class="segment-time">${time}</span><span class="segment-summary">${segment.summary}</span>`;
-                                
-                                segmentButton.addEventListener('click', () => {
-                                    if (player && player.seekTo) {
-                                        player.seekTo(segment.start, true);
-                                        player.playVideo();
-                                    }
-                                });
-                                chapterBlock.appendChild(segmentButton);
-                            });
-                            chaptersContainer.appendChild(chapterBlock);
-                        });
-                        partContent.appendChild(chaptersContainer);
-                    }
-                    // 4. 플레이어 생성 및 '스크롤 싱크' 이벤트 연결
+                // 1. 챕터 헤더 (이모지, 제목, 색상) 생성
+                const chapterHeader = createDOMElement('div', { 
+                    className: 'chapter-header',
+                    style: `border-left-color: ${chapter.color};` // 감정 색상 적용
+                });
+                chapterHeader.innerHTML = `<span class="chapter-emoji">${chapter.emoji}</span><span class="chapter-title">${chapter.title}</span>`;
+                chapterBlock.appendChild(chapterHeader);
+                
+                // 2. 챕터에 속한 '세그먼트'들을 순회하며 버튼 생성
+                chapter.segments.forEach(segment => {
+                    const segmentButton = createDOMElement('button', { 
+                        className: 'timeline-segment-button',
+                        'data-start-time': segment.start
+                    });
+                    
+                    const time = new Date(segment.start * 1000).toISOString().substr(14, 5);
+                    // [✅ 사용자 친화적 수정] '(요약 실패)' 대신 '...'으로 표시
+                    const summaryText = segment.summary === '(요약 실패)' 
+                        ? '<span class="segment-summary-failed">...</span>' 
+                        : segment.summary;
+                    
+                    segmentButton.innerHTML = `<span class="segment-time">${time}</span><span class="segment-summary">${summaryText}</span>`;
+                    
+                    // 클릭 이벤트 (기존과 동일)
+                    segmentButton.addEventListener('click', () => {
+                        if (player && player.seekTo) {
+                            player.seekTo(segment.start, true);
+                            player.playVideo();
+                        }
+                    });
+                    chapterBlock.appendChild(segmentButton);
+                });
+                chaptersContainer.appendChild(chapterBlock);
+            });
+            partContent.appendChild(chaptersContainer);
+        }
+        
+                    // 4. 플레이어 생성 및 스크롤 싱크 이벤트 연결 (기존과 동일)
                     setTimeout(() => {
                         if (window.YT && window.YT.Player) {
                             player = new window.YT.Player(playerId, {
@@ -134,27 +141,18 @@ function renderMessageParts(parts, role, receivedAt) {
                                         if (event.data === window.YT.PlayerState.PLAYING) {
                                             timelineInterval = setInterval(() => {
                                                 const currentTime = player.getCurrentTime();
-                                                const allSegmentButtons = document.querySelectorAll(`#timeline-chapters-${playerId} .timeline-segment-button`);
-                                                
-                                                let activeSegmentFound = false;
-                                                // 모든 챕터와 세그먼트를 순회하며 활성화할 버튼을 찾습니다.
-                                                timelineData.chapters.forEach(ch => {
-                                                    ch.segments.forEach((seg, idx) => {
-                                                        const button = Array.from(allSegmentButtons).find(btn => parseFloat(btn.dataset.startTime) === seg.start);
-                                                        if (!button) return;
-
-                                                        const nextSeg = ch.segments[idx + 1];
-                                                        const segmentEndTime = nextSeg ? nextSeg.start : seg.end + 30; // 대략적인 종료 시간
-                                                        
-                                                        if (currentTime >= seg.start && currentTime < segmentEndTime) {
-                                                            button.classList.add('active');
-                                                            activeSegmentFound = true;
-                                                        } else {
-                                                            button.classList.remove('active');
-                                                        }
-                                                    });
+                                                const allButtons = document.querySelectorAll(`#timeline-chapters-${playerId} .timeline-segment-button`);
+                                                allButtons.forEach(button => {
+                                                    const startTime = parseFloat(button.dataset.startTime);
+                                                    const nextButton = button.nextElementSibling;
+                                                    const endTime = nextButton ? parseFloat(nextButton.dataset.startTime) : startTime + 30; // 대략적 종료 시간
+                                                    
+                                                    if (currentTime >= startTime && currentTime < endTime) {
+                                                        button.classList.add('active');
+                                                    } else {
+                                                        button.classList.remove('active');
+                                                    }
                                                 });
-
                                             }, 500);
                                         }
                                     }

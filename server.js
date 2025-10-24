@@ -353,57 +353,74 @@ async function displayYoutubeVideo({ videoId }) {
 }
 
 async function youtubeVideoAssistant({ query, summarize = true, display = true }) {
-    console.log(`[Chapter Engine V2] 챕터링 요약 시작. 검색어: "${query}"`);
+    console.log(`[Chapter Engine V2.1 INTEGRATED] 최종 통합 엔진 시작. 검색어: "${query}"`);
 
-    // --- [ChatGPT 설계] 안정화된 감정 기반 챕터링 엔진 ---
+    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY); // AI 인스턴스를 한 번만 생성
+    const model = genAI.getGenerativeModel({ model: 'gemini-flash-lite-latest' });
+
+    // --- [ChatGPT 제안 채택] 더 풍부해진 감정 탐지 로직 ---
     const detectEmotion = (text = "") => {
         const lower = text.toLowerCase();
-        if (lower.includes("웃음") || lower.includes("재미") || lower.includes("ㅋㅋ")) return "happy";
-        if (lower.includes("요리") || lower.includes("만들") || lower.includes("긴장")) return "tense";
-        if (lower.includes("춤") || lower.includes("노래") || lower.includes("게임")) return "action";
-        if (lower.includes("대화") || lower.includes("이야기")) return "dialogue";
+        if (lower.includes("웃음") || lower.includes("재미") || lower.includes("ㅋㅋ") || lower.includes("funny")) return "funny";
+        if (lower.includes("요리") || lower.includes("만들") || lower.includes("긴장") || lower.includes("cook")) return "tense";
+        if (lower.includes("춤") || lower.includes("노래") || lower.includes("게임") || lower.includes("dance")) return "excited";
+        if (lower.includes("감동") || lower.includes("눈물") || lower.includes("touch")) return "emotional";
         return "neutral";
     };
 
-    function groupSegmentsIntoChapters(segments = []) {
-        if (!Array.isArray(segments) || segments.length === 0) {
-            console.warn("[Chapter Engine] 그룹화할 세그먼트 데이터가 비어 있습니다.");
-            return [];
+    // --- [제미나이 업그레이드] AI를 이용한 챕터 제목 생성 함수 ---
+    async function generateChapterTitleAI(segments) {
+        if (!segments || segments.length === 0) return "소개";
+        const combinedSummary = segments.map(s => s.summary).join(' ');
+        
+        const titlePrompt = `다음은 영상의 한 챕터에 대한 요약 내용입니다. 이 챕터 전체를 대표하는, 한국어로 된 15자 이내의 짧고 매력적인 제목을 만들어줘. 다른 설명 없이 제목만 답변해줘.\n\n내용: "${combinedSummary}"`;
+        
+        try {
+            const result = await model.generateContent(titlePrompt);
+            return result.response.text().trim().replace(/"/g, '');
+        } catch (e) {
+            console.warn("[Chapter Engine] AI 제목 생성 실패. 첫 요약으로 대체합니다.");
+            return segments[0].summary.substring(0, 20) + "..."; // 실패 시 폴백
         }
+    }
+
+    // --- 챕터 그룹핑 최종 로직 ---
+    async function groupSegmentsIntoChapters(segments = []) {
+        if (!Array.isArray(segments) || segments.length === 0) return [];
 
         const chapters = [];
         let currentGroup = [];
-        let currentEmotion = (segments[0] && segments[0].emotion_tag) ? segments[0].emotion_tag : 'neutral';
+        let currentEmotion = segments.length > 0 ? segments[0].emotion_tag : 'neutral';
 
         for (const seg of segments) {
-            if (!seg || !seg.summary) continue;
-
-            const emotion = seg.emotion_tag;
-            if (emotion !== currentEmotion && currentGroup.length > 0) {
+            if (seg.emotion_tag !== currentEmotion && currentGroup.length > 0) {
                 chapters.push({ emotion: currentEmotion, segments: currentGroup });
                 currentGroup = [];
             }
-            currentEmotion = emotion;
+            currentEmotion = seg.emotion_tag;
             currentGroup.push(seg);
         }
+        if (currentGroup.length > 0) chapters.push({ emotion: currentEmotion, segments: currentGroup });
 
-        if (currentGroup.length > 0) {
-            chapters.push({ emotion: currentEmotion, segments: currentGroup });
-        }
-
-        const colorMap = { happy: "#4caf50", tense: "#f44336", action: "#ff9800", dialogue: "#2196f3", neutral: "#9e9e9e", error: "#9e9e9e" };
-        const emojiMap = { happy: "😂", tense: "🔥", action: "🕹️", dialogue: "💬", neutral: "📄", error: "⚠️" };
-        const titleMap = { happy: "즐거운 순간", tense: "긴장 & 집중", action: "액션 & 게임", dialogue: "대화 & 스토리", neutral: "일반 정보", error: "오류 구간" };
-
-        return chapters.map((ch) => ({
-            title: titleMap[ch.emotion] || "기타",
-            emotion: ch.emotion,
-            color: colorMap[ch.emotion] || "#9e9e9e",
-            emoji: emojiMap[ch.emotion] || "📄",
-            segments: ch.segments,
+        const colorMap = { funny: "#4FC3F7", tense: "#FF7043", excited: "#81C784", emotional: "#BA68C8", neutral: "#9E9E9E" };
+        const emojiMap = { funny: "😂", tense: "🔥", excited: "🕹️", emotional: "💜", neutral: "💬" };
+        
+        // [✅ 핵심] 각 챕터에 대해 비동기적으로 AI 제목을 생성합니다.
+        const titledChapters = await Promise.all(chapters.map(async (ch) => {
+            const aiTitle = await generateChapterTitleAI(ch.segments);
+            return {
+                title: aiTitle, // AI가 생성한 제목 사용
+                emotion: ch.emotion,
+                color: colorMap[ch.emotion] || "#9E9E9E",
+                emoji: emojiMap[ch.emotion] || "📄",
+                segments: ch.segments,
+            };
         }));
+        
+        return titledChapters;
     }
 
+    // --- (이하 나머지 로직은 몬드님의 기존 코드와 거의 동일합니다) ---
     try {
         const urlToProcess = (query.startsWith('http')) ? query : query;
         const transcriptData = await getYoutubeTranscript({ url: urlToProcess });
@@ -425,7 +442,7 @@ async function youtubeVideoAssistant({ query, summarize = true, display = true }
             try {
                 const overviewResult = await model.generateContent(overviewPrompt);
                 finalResultPayload.overview = overviewResult.response.text().trim();
-                console.log('[Timeline Engine V2] Step 1: 영상 전체 개요 생성 성공.');
+                console.log('[Timeline Engine V2.1] Step 1: 영상 전체 개요 생성 성공.');
             } catch (e) {
                 finalResultPayload.overview = "영상 전체 개요를 생성하는 데 실패했습니다.";
             }
@@ -455,13 +472,17 @@ async function youtubeVideoAssistant({ query, summarize = true, display = true }
                 }
             });
             const summarizedSegments = await Promise.all(summaryPromises);
-            console.log(`[Timeline Engine V2] Step 2 성공: ${summarizedSegments.length}개의 구간 요약 완료.`);
+            console.log(`[Timeline Engine V2.1 INTEGRATED] Step 2 성공: ${summarizedSegments.length}개의 구간 요약 완료.`);
             
-            finalResultPayload.chapters = groupSegmentsIntoChapters(summarizedSegments);
-            console.log(`[Chapter Engine] Step 3 성공: ${finalResultPayload.chapters.length}개의 챕터를 생성했습니다.`);
+            // 🟢 1. [오류 제거] '요약 실패' 구간을 원천적으로 제거합니다. (가장 안정적인 방법)
+            const validSegments = summarizedSegments.filter(seg => seg.summary !== '(요약 실패)');
+            
+            // 🟢 2. [기능 업그레이드] 깨끗한 데이터로만 챕터를 만들고, AI가 제목을 만들 때까지 기다립니다(await).
+            finalResultPayload.chapters = await groupSegmentsIntoChapters(validSegments);
+            console.log(`[Chapter Engine V2.1 INTEGRATED] Step 3 성공: ${finalResultPayload.chapters.length}개의 AI 제목 챕터를 생성했습니다.`);
 
         } else if (summarize) {
-            console.log(`[Timeline Engine V2] 플랜 B: 자막 없음. scrapeWebsite를 이용한 기본 요약을 시도합니다.`);
+            console.log(`[Timeline Engine V2.1] 플랜 B: 자막 없음. scrapeWebsite를 이용한 기본 요약을 시도합니다.`);
             const scrapedContent = await scrapeWebsite({ url: `https://www.youtube.com/watch?v=${video_id}` });
             const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
             const model = genAI.getGenerativeModel({ model: 'gemini-flash-lite-latest' });
