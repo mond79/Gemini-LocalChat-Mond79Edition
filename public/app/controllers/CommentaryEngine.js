@@ -1,32 +1,35 @@
-// public/app/controllers/CommentaryEngine.js (✨ 최종 완성본)
+import { appState } from '../state/AppState.js';
+import { getEmotionProfile, interpolateEmotionState } from '../utils/emotion-utils.js';
 
 export const CommentaryEngine = {
+    // --- 상태 변수 ---
     player: null,
     chapters: [],
     intervalId: null,
+    isOn: false,
     isPlayingCommentary: false,
-    cooldown: 7000,
+    cooldown: 6000,
+    currentEmotionState: null,
 
+    // --- UI 요소 ---
     overlayEl: document.getElementById('ai-commentary-overlay'),
     emotionBarEl: document.getElementById('emotion-bar'),
+    toggleButton: null,
 
-    emotionColors: {
-        calm: "linear-gradient(90deg,#90caf9,#64b5f6)",
-        tense: "linear-gradient(90deg,#ef5350,#d32f2f)",
-        emotional: "linear-gradient(90deg,#ba68c8,#8e24aa)",
-        funny: "linear-gradient(90deg,#ffb74d,#f57c00)",
-        excited: "linear-gradient(90deg,#81c784,#43a047)",
-        sad: "linear-gradient(90deg,#90a4ae,#607d8b)",
-        neutral: "linear-gradient(90deg,#e0e0e0,#bdbdbd)", // 중립 감정 추가
-    },
-
-    start(player, chapters) {
-        this.stop(); // 새로운 해설 시작 전, 기존 엔진은 반드시 멈춥니다.
+    // --- 핵심 함수 ---
+    start(player, chapters, toggleButton) {
+        this.stop();
         this.player = player;
         this.chapters = chapters;
-        console.log("🎙️ Commentary Engine v2.6 FINAL Started.");
+        this.toggleButton = toggleButton;
+        this.isOn = true;
+        this.currentEmotionState = getEmotionProfile('neutral');
+        this.updateToggleButton();
+        console.log("🎙️ Commentary Engine v2.8 FINAL Started.");
         
-        this.intervalId = setInterval(() => this.loop(), 3000);
+        document.getElementById('message-input').placeholder = "영상에 대해 루나에게 물어보세요...";
+
+        this.intervalId = setInterval(() => this.loop(), 250);
     },
 
     stop() {
@@ -34,95 +37,196 @@ export const CommentaryEngine = {
             clearInterval(this.intervalId);
             this.intervalId = null;
             this.player = null;
-            this.isPlayingCommentary = false; // 상태 초기화
-            console.log("🎙️ Commentary Engine Stopped and Cleaned Up.");
+            this.isOn = false;
+            if(this.toggleButton) this.toggleButton.classList.remove('active');
+            
+            document.getElementById('message-input').placeholder = "메시지를 입력하세요...";
+
+            console.log("🎙️ Commentary Engine Stopped.");
+        }
+    },
+    
+    toggle() {
+        this.isOn = !this.isOn;
+        this.updateToggleButton();
+        this.emotionBarEl.style.opacity = this.isOn ? 1 : 0;
+        if(!this.isOn) this.overlayEl.classList.remove('show');
+    },
+    
+    updateToggleButton() {
+        if(this.toggleButton) {
+            this.toggleButton.textContent = this.isOn ? "🎙️ 해설 ON" : "🚫 해설 OFF";
+            this.toggleButton.classList.toggle('active', this.isOn);
         }
     },
 
     loop() {
-        if (!this.player || typeof this.player.getPlayerState !== 'function' || this.isPlayingCommentary) {
+        if (!this.player || !this.isOn || typeof this.player.getPlayerState !== 'function' || this.player.getPlayerState() !== 1) {
             return;
-        }
-        
-        // YT.PlayerState.PLAYING (값: 1)
-        if (this.player.getPlayerState() !== 1) {
-            return; // 영상이 재생 중이 아니면 아무것도 하지 않음
         }
 
         const currentTime = this.player.getCurrentTime();
-        let activeSegment = null;
+        let currentSegment = null;
+        let progress = 0;
 
         for (const chapter of this.chapters) {
-            for (const segment of chapter.segments) {
-                // 이 세그먼트가 이미 해설되었는지 확인
-                if (segment.commentaryPlayed) continue;
-
-                const nextSegment = chapter.segments[chapter.segments.indexOf(segment) + 1];
-                const endTime = nextSegment ? nextSegment.start : segment.start + 30;
-                if (currentTime >= segment.start && currentTime < endTime) {
-                    activeSegment = segment;
+            for (let i = 0; i < chapter.segments.length; i++) {
+                const seg = chapter.segments[i];
+                const nextSeg = chapter.segments[i+1];
+                const endTime = nextSeg ? nextSeg.start : seg.start + 30;
+                if (currentTime >= seg.start && currentTime < endTime) {
+                    currentSegment = seg;
+                    progress = (currentTime - seg.start) / (endTime - seg.start);
                     break;
                 }
             }
-            if (activeSegment) break;
+            if (currentSegment) break;
         }
+        
+        if (currentSegment) {
+            const targetProfile = getEmotionProfile(currentSegment.emotion_tag);
+            this.currentEmotionState = interpolateEmotionState(this.currentEmotionState, targetProfile, 0.1);
+            this.updateEmotionBar();
 
-        if (activeSegment) {
-            this.isPlayingCommentary = true;
-            activeSegment.commentaryPlayed = true; // 해설 재생 플래그 설정
-            this.playCommentary(activeSegment);
-            setTimeout(() => { this.isPlayingCommentary = false; }, this.cooldown);
+            if (progress < 0.1 && !currentSegment.commentaryPlayed && !this.isPlayingCommentary) {
+                this.isPlayingCommentary = true;
+                currentSegment.commentaryPlayed = true;
+                
+                const initialProfile = getEmotionProfile(currentSegment.emotion_tag);
+                this.playAutoCommentary(currentSegment.summary, initialProfile.name, initialProfile.pitch, initialProfile.rate);
+                
+                setTimeout(() => { this.isPlayingCommentary = false; }, this.cooldown);
+            }
         }
     },
 
-    async playCommentary(segment) {
-        let wasPlaying = this.player.getPlayerState() === 1;
-        try {
-            if(wasPlaying) this.player.pauseVideo();
+    async ask(question) {
+        if (!this.isOn || !this.player || typeof this.player.getCurrentTime !== 'function') return;
 
-            const response = await fetch('/api/generate-commentary', {
+        const currentTime = this.player.getCurrentTime();
+        let currentSegment = null;
+
+        for (const chapter of this.chapters) {
+            for (const seg of chapter.segments) {
+                const nextSeg = chapter.segments[chapter.segments.indexOf(seg) + 1];
+                const endTime = nextSeg ? nextSeg.start : seg.start + 30;
+                if (currentTime >= seg.start && currentTime < endTime) {
+                    currentSegment = seg;
+                    break;
+                }
+            }
+            if(currentSegment) break;
+        }
+
+        if (!currentSegment) {
+            this.showOverlayText("현재 장면에 대한 정보를 찾을 수 없어요.");
+            return;
+        }
+
+        this.showOverlayText("루나가 생각 중입니다...");
+
+        try {
+            // 1. 🟢 [추가] 현재 UI에서 선택된 모델 ID를 가져옵니다.
+            const activeModelId = appState.sessions[appState.activeSessionId]?.model || 'gemini-flash-latest';
+
+            const response = await fetch('/api/video-dialogue', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    text: segment.summary,
-                    emotion: segment.emotion_tag || 'calm',
+                    question: question,
+                    segment: currentSegment,
+                    emotionState: this.currentEmotionState,
+                    // 2. 🟢 [추가] 가져온 모델 ID를 함께 전송합니다.
+                    modelId: activeModelId
                 }),
             });
             const data = await response.json();
 
+            // 3. 🟢 [수정] _speak 대신 playDialogueAudio를 사용합니다. (이전 버전에서 이름이 바뀌었네요, 제가 실수했습니다.)
             if (data.audioContent) {
-                const audio = new Audio("data:audio/mp3;base64," + data.audioContent);
-                audio.volume = 0.9;
-                audio.play();
-                
-                audio.onended = () => {
-                    if (wasPlaying && this.player && typeof this.player.playVideo === 'function') {
-                        this.player.playVideo();
-                    }
-                };
-                
-                this.updateEmotionBar(segment.emotion_tag);
-                this.showOverlayText(segment.summary);
+                this.playDialogueAudio(data.audioContent, data.answerText);
             } else {
-                if (wasPlaying) this.player.playVideo();
+                this.showOverlayText(data.answerText || "죄송해요, 답변을 생성하는 데 실패했습니다.");
             }
         } catch (error) {
-            console.error('Commentary Playback Error:', error);
+            console.error('Dialogue Ask Error:', error);
+            this.showOverlayText("죄송해요, 답변을 생성하는 데 오류가 발생했습니다.");
+        }
+    },
+
+    playDialogueAudio(audioContent, text) {
+        let wasPlaying = this.player && typeof this.player.getPlayerState === 'function' && this.player.getPlayerState() === 1;
+        if (wasPlaying) this.player.pauseVideo();
+        
+        const audio = new Audio("data:audio/mp3;base64," + audioContent);
+        audio.play();
+        this.showOverlayText(text);
+
+        audio.onended = () => {
             if (wasPlaying && this.player && typeof this.player.playVideo === 'function') {
                 this.player.playVideo();
             }
+        };
+    },
+
+    // [✅ 핵심] '자동 해설'을 위한 함수도 이제 단일화된 음성 출력 함수를 호출합니다.
+    async playAutoCommentary(text, voiceName, pitch, speakingRate) {
+        if (!this.isOn) return;
+        try {
+            const response = await fetch('/api/generate-commentary', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text, voiceName, pitch, speakingRate }),
+            });
+            const data = await response.json();
+            if (data.audioContent) {
+                this._speak(data.audioContent, text);
+            }
+        } catch (error) {
+            console.error('Auto Commentary Error:', error);
         }
     },
-    
+
+    _speak(audioContent, text) {
+        // 1. 영상이 재생 중이었는지 상태를 기억합니다.
+        let wasPlaying = this.player && typeof this.player.getPlayerState === 'function' && this.player.getPlayerState() === 1;
+
+        // 2. 영상이 재생 중이었다면, 잠시 멈춥니다.
+        if (wasPlaying) {
+            this.player.pauseVideo();
+        }
+        
+        const audio = new Audio("data:audio/mp3;base64," + audioContent);
+        audio.play();
+        this.showOverlayText(text);
+
+        // 3. 루나의 말이 끝나면, 원래 영상이 재생 중이었을 경우에만 다시 재생합니다.
+        audio.onended = () => {
+            if (wasPlaying && this.player && typeof this.player.playVideo === 'function') {
+                this.player.playVideo();
+            }
+        };
+
+        // 4. 혹시 오디오 재생에 문제가 생길 경우를 대비한 안전장치
+        audio.onerror = () => {
+             console.error("오디오 재생 중 오류가 발생했습니다.");
+             if (wasPlaying && this.player && typeof this.player.playVideo === 'function') {
+                this.player.playVideo();
+            }
+        };
+    },
+
     showOverlayText(text) {
         if (!this.overlayEl) this.overlayEl = document.getElementById('ai-commentary-overlay');
         this.overlayEl.textContent = text;
         this.overlayEl.classList.add('show');
         setTimeout(() => this.overlayEl.classList.remove('show'), 5000);
     },
-    updateEmotionBar(emotion) {
+    
+    updateEmotionBar() {
         if (!this.emotionBarEl) this.emotionBarEl = document.getElementById('emotion-bar');
-        const emotionKey = emotion || 'calm';
-        this.emotionBarEl.style.background = this.emotionColors[emotionKey] || this.emotionColors.calm;
+        if (this.currentEmotionState && this.currentEmotionState.color) {
+             this.emotionBarEl.style.background = this.currentEmotionState.color;
+        }
     }
 };

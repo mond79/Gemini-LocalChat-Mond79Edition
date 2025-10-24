@@ -15,6 +15,7 @@ import { SettingsController } from '../controllers/SettingsController.js';
 import { UsageReporter } from '../modules/settings/UsageReporter.js';
 import * as AnimationManager from '../modules/AnimationManager.js';
 import { saveData } from '../../utils/storage.js';
+import { CommentaryEngine } from '../controllers/CommentaryEngine.js';
 
 let recognition = null; // ✅ 음성 인식 객체를 저장할 변수
 
@@ -202,9 +203,13 @@ export const handlers = {
             
             // InputArea.js에 텍스트를 설정하는 기능이 있는지 확인해야 합니다.
             // 이 프로젝트 구조상 InputArea 모듈을 통해 제어하는 것이 좋습니다.
-            InputArea.setTextValue(transcript); 
-
-            handlers.handleSendMessage();
+            if (CommentaryEngine.isOn) {
+                CommentaryEngine.ask(transcript);
+            } else {
+                document.getElementById('message-input').value = transcript;
+                handlers.handleInputUpdate();
+                handlers.handleSendMessage();
+            }
         };
 
         recognition.onend = () => {
@@ -379,7 +384,7 @@ export const handlers = {
         handlers.handleSendMessage();
     },
     // =========================================================
-    async handleSendMessage() { await ChatService.sendMessage(); $('#file-process-options').style.display = 'none';},
+    async handleSendMessage() { if (CommentaryEngine.isOn) { const inputEl = document.getElementById('message-input'); const question = inputEl.value.trim(); if (question) { inputEl.value = ''; handlers.handleInputUpdate(); await CommentaryEngine.ask(question); } } else { await ChatService.sendMessage(); $('#file-process-options').style.display = 'none'; } },
     handleCopyMessage(messageId) { if (!messageId) return; const session = appState.sessions[appState.activeSessionId]; if (!session) return; const message = session.history.find(m => m.id === messageId); if (!message) return; const textToCopy = message.parts.filter(p => p.type === 'text').map(p => p.text).join('\n\n'); if (textToCopy) { navigator.clipboard.writeText(textToCopy).then(() => { Toast.show('클립보드에 복사되었습니다.'); }).catch(err => { console.error('클립보드 복사 실패:', err); Toast.show('복사에 실패했습니다.'); }); } else { Toast.show('복사할 텍스트가 없습니다.'); } },
     handleCopyCodeBlock(buttonElement) { const wrapper = buttonElement.closest('.code-block-wrapper'); if (!wrapper) return; const codeElement = wrapper.querySelector('pre > code'); if (!codeElement) return; const codeText = codeElement.innerText; navigator.clipboard.writeText(codeText).then(() => { Toast.show('코드가 클립보드에 복사되었습니다.'); }).catch(err => { console.error('코드 블록 복사 실패:', err); Toast.show('코드 복사에 실패했습니다.'); }); },
     async handleRegenerate(messageId) { const sessionId = appState.activeSessionId; await ChatService.regenerate(sessionId, messageId); },

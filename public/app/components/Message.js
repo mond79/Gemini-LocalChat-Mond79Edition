@@ -60,21 +60,29 @@ function renderMessageParts(parts, role, receivedAt) {
         const timelineData = part.data;
         partContent = createDOMElement('div', { className: 'timeline-container' });
 
-        // 1. 상단 개요 렌더링 (기존과 동일)
+        // [핵심] 타임라인 컨테이너 맨 위에 토글 버튼을 추가합니다.
+        const commentaryToggleBtn = createDOMElement('button', { 
+            id: `commentary-toggle-${timelineData.videoId}`,
+            className: 'commentary-toggle-btn'
+        }, "🎙️ 해설 ON");
+        commentaryToggleBtn.addEventListener('click', () => CommentaryEngine.toggle());
+        partContent.appendChild(commentaryToggleBtn);
+
+        // 1. 상단 개요 렌더링 
         if (timelineData.overview) {
             const overviewContainer = createDOMElement('div', { className: 'timeline-overview' });
             overviewContainer.innerHTML = `<h3>📘 영상 개요</h3>${window.marked.parse(timelineData.overview)}`;
             partContent.appendChild(overviewContainer);
         }
 
-        // 2. 자막 없는 영상의 폴백 요약 렌더링 (기존과 동일)
+        // 2. 자막 없는 영상의 폴백 요약 렌더링 
         if (timelineData.fallback_summary) {
             const fallbackContainer = createDOMElement('div', { className: 'timeline-overview' });
             fallbackContainer.innerHTML = `<h3>⚠️ 요약 정보</h3>${window.marked.parse(timelineData.fallback_summary)}`;
             partContent.appendChild(fallbackContainer);
         }
 
-        // 3. 유튜브 플레이어 생성 (기존과 동일)
+        // 3. 유튜브 플레이어 생성 
         const playerContainer = createDOMElement('div', { className: 'youtube-player-container' });
         const playerId = `yt-player-${timelineData.videoId}-${Date.now()}`;
         playerContainer.id = playerId;
@@ -132,7 +140,7 @@ function renderMessageParts(parts, role, receivedAt) {
                     // 4. 플레이어 생성 및 스크롤 싱크 이벤트 연결 (기존과 동일)
                     setTimeout(() => {
                         if (window.YT && window.YT.Player) {
-                            // 1. 기존과 동일하게 플레이어를 생성합니다.
+                            // 1. [기존 로직 유지] 플레이어를 생성합니다.
                             player = new window.YT.Player(playerId, {
                                 videoId: timelineData.videoId,
                                 width: '100%',
@@ -146,8 +154,9 @@ function renderMessageParts(parts, role, receivedAt) {
                                                 const allButtons = document.querySelectorAll(`#timeline-chapters-${playerId} .timeline-segment-button`);
                                                 allButtons.forEach(button => {
                                                     const startTime = parseFloat(button.dataset.startTime);
-                                                    const nextButton = button.nextElementSibling;
-                                                    const endTime = nextButton ? parseFloat(nextButton.dataset.startTime) : startTime + 30; // 대략적 종료 시간
+                                                    // [개선] nextElementSibling은 같은 챕터 내에서만 찾아야 하므로, 더 안정적인 방법으로 수정합니다.
+                                                    const nextButton = Array.from(allButtons).find(b => parseFloat(b.dataset.startTime) > startTime);
+                                                    const endTime = nextButton ? parseFloat(nextButton.dataset.startTime) : startTime + 30;
                                                     
                                                     if (currentTime >= startTime && currentTime < endTime) {
                                                         button.classList.add('active');
@@ -161,9 +170,11 @@ function renderMessageParts(parts, role, receivedAt) {
                                 }
                             });
 
-                            // 2. 🟢 [핵심 추가] 방금 만든 플레이어와 챕터 데이터로 Commentary Engine을 깨웁니다!
+                            // 2. 🟢 [v2.7 최종 수정] 방금 만든 플레이어, 챕터 데이터, 그리고 '토글 버튼' 객체를 Commentary Engine에 넘겨 깨웁니다!
                             if (timelineData.chapters && timelineData.chapters.length > 0) {
-                                CommentaryEngine.start(player, timelineData.chapters);
+                                // 위에서 만든 commentaryToggleBtn 요소를 찾아서 함께 전달합니다.
+                                const toggleButton = document.getElementById(`commentary-toggle-${timelineData.videoId}`);
+                                CommentaryEngine.start(player, timelineData.chapters, toggleButton);
                             }
                         }
                     }, 100);

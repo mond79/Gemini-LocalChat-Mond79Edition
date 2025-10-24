@@ -461,3 +461,29 @@ body.dark-mode .timeline-segment-button.active {
   transition: background 0.8s ease;
   pointer-events: none;
 }
+
+/* --- 🎙️ v2.7 AI Commentary Enhancements --- */
+.commentary-toggle-btn {
+    display: block;
+    margin: 0 auto 15px auto;
+    padding: 8px 16px;
+    border-radius: 20px;
+    border: 1px solid var(--border-secondary);
+    background-color: var(--bg-sidebar);
+    color: var(--text-secondary);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.commentary-toggle-btn.active {
+    background-color: var(--accent-color);
+    color: white;
+    border-color: var(--accent-color);
+}
+
+#emotion-bar {
+    opacity: 1;
+    /* [핵심] 배경색이 부드럽게 변하도록 transition 추가 */
+    transition: opacity 0.4s ease, background 0.25s linear; 
+}

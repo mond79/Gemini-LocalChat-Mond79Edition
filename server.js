@@ -3099,21 +3099,11 @@ app.post('/api/activity/finish', (req, res) => {
 // 🎙️ AI 감정 해설 TTS 엔진
 app.post('/api/generate-commentary', async (req, res) => {
     try {
-        const { text, emotion } = req.body;
+        // [핵심] emotion 대신 더 세밀한 pitch와 speakingRate를 직접 받습니다.
+        const { text, voiceName, pitch, speakingRate } = req.body;
         if (!text || !GOOGLE_API_KEY) {
-            return res.status(400).json({ message: '텍스트와 API 키가 필요합니다.' });
+            return res.status(400).json({ message: '필수 파라미터가 누락되었습니다.' });
         }
-
-        // [ChatGPT 제안 채택] 감정별 음성 프로필
-        const voiceProfiles = {
-          calm:      { name: 'ko-KR-Wavenet-A', ssmlGender: 'FEMALE', pitch: 0.0,   speakingRate: 1.0 },
-          tense:     { name: 'ko-KR-Wavenet-B', ssmlGender: 'MALE',   pitch: -3.0,  speakingRate: 1.05 },
-          emotional: { name: 'ko-KR-Wavenet-D', ssmlGender: 'FEMALE', pitch: -1.5,  speakingRate: 0.95 },
-          funny:     { name: 'ko-KR-Wavenet-C', ssmlGender: 'FEMALE', pitch: 2.0,   speakingRate: 1.15 },
-          excited:   { name: 'ko-KR-Wavenet-C', ssmlGender: 'FEMALE', pitch: 3.5,   speakingRate: 1.2 },
-          sad:       { name: 'ko-KR-Wavenet-B', ssmlGender: 'MALE',   pitch: -4.0,  speakingRate: 0.9 },
-        };
-        const selected = voiceProfiles[emotion] || voiceProfiles.calm;
 
         const GOOGLE_TTS_URL = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${GOOGLE_API_KEY}`;
         
@@ -3122,11 +3112,11 @@ app.post('/api/generate-commentary', async (req, res) => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 input: { text: text },
-                voice: { languageCode: 'ko-KR', name: selected.name, ssmlGender: selected.ssmlGender },
+                voice: { languageCode: 'ko-KR', name: voiceName || 'ko-KR-Wavenet-A' },
                 audioConfig: { 
                     audioEncoding: 'MP3',
-                    pitch: selected.pitch,
-                    speakingRate: selected.speakingRate,
+                    pitch: pitch || 0.0,
+                    speakingRate: speakingRate || 1.0,
                 }
             })
         });
@@ -3137,11 +3127,65 @@ app.post('/api/generate-commentary', async (req, res) => {
         }
 
         const data = await response.json();
-        res.json({ audioContent: data.audioContent }); // Base64로 인코딩된 오디오를 그대로 전달
+        res.json({ audioContent: data.audioContent });
 
     } catch (err) {
-        console.error('v2.6 Commentary TTS Error:', err);
+        console.error('v2.7 Commentary TTS Error:', err);
         res.status(500).json({ message: `음성 해설 생성 중 오류: ${err.message}` });
+    }
+});
+
+// 🎙️ 하이브리드 영상 대화 통합 API
+app.post('/api/video-dialogue', async (req, res) => {
+    try {
+        // ▼▼▼ [✅ 핵심] req.body에서 modelId를 추가로 받아옵니다. ▼▼▼
+        const { question, segment, emotionState, modelId } = req.body;
+        const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+
+        // ▼▼▼ [✅ 핵심] 하드코딩된 모델 이름 대신, 전달받은 modelId를 사용합니다. ▼▼▼
+        const model = genAI.getGenerativeModel({ model: modelId || "gemini-flash-latest" });
+
+        const prompt = `
+당신은 영상의 내용을 완벽하게 이해하고 사용자와 대화하는 AI 해설자 '루나'입니다.
+주어진 [현재 장면 정보]를 바탕으로 사용자의 [질문]에 대해, 친절하고 간결한 1~2문장의 답변을 생성해주세요.
+
+[현재 장면 정보]
+- 현재 감정: ${emotionState.kind}
+- 현재 장면 요약: ${segment.summary || "정보 없음"}
+
+[질문]
+"${question}"
+`;
+
+        const result = await model.generateContent(prompt);
+        const answerText = result.response.text();
+
+        const GOOGLE_TTS_URL = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${GOOGLE_API_KEY}`;
+        const ttsResponse = await fetch(GOOGLE_TTS_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                input: { text: answerText },
+                voice: { languageCode: 'ko-KR', name: 'ko-KR-Wavenet-A' },
+                audioConfig: { 
+                    audioEncoding: 'MP3',
+                    pitch: emotionState.pitch,
+                    speakingRate: emotionState.rate,
+                }
+            })
+        });
+
+        if (!ttsResponse.ok) throw new Error('TTS 생성 실패');
+        const ttsData = await ttsResponse.json();
+
+        res.json({
+            answerText: answerText,
+            audioContent: ttsData.audioContent,
+        });
+
+    } catch (err) {
+        console.error('v2.8 Dialogue API Error:', err);
+        res.status(500).json({ message: `영상 대화 생성 중 오류: ${err.message}` });
     }
 });
 
