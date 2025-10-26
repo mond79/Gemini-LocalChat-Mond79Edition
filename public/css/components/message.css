@@ -501,3 +501,61 @@ body.dark-mode .timeline-segment-button.active {
 .timestamp-link:hover {
     background-color: var(--accent-color);
 }
+
+/* --- 🎙️ v3.4 Live Script Mode UI --- */
+.commentary-mode-controls {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+    margin: 10px auto 20px auto; /* 위아래 여백 추가 */
+    padding: 6px;
+    background-color: var(--bg-sidebar);
+    border-radius: 25px; /* 둥근 알약 모양 */
+    border: 1px solid var(--border-primary);
+    max-width: fit-content; /* 내용물에 맞게 너비 조절 */
+}
+
+/* '해설 ON/OFF' 버튼 스타일 */
+.commentary-toggle-btn {
+    padding: 8px 16px;
+    border-radius: 20px;
+    border: none;
+    background-color: transparent;
+    color: var(--text-secondary);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.commentary-toggle-btn.active {
+    background-color: var(--accent-color);
+    color: white;
+}
+
+/* '원본/번역/요약' 버튼 그룹 스타일 */
+.script-mode-selector {
+    display: flex;
+    background-color: var(--bg-chat-area);
+    border-radius: 18px;
+    padding: 2px;
+    border: 1px solid var(--border-secondary);
+}
+
+.script-mode-btn {
+    padding: 6px 12px;
+    border: none;
+    background-color: transparent;
+    color: var(--text-secondary);
+    border-radius: 16px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+/* 현재 선택된 모드 버튼 스타일 */
+.script-mode-btn.active {
+    background-color: var(--bg-active);
+    color: var(--text-light);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}

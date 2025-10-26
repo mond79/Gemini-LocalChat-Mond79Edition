@@ -3203,6 +3203,59 @@ app.post('/api/video-dialogue', async (req, res) => {
     }
 });
 
+// ✍️ [v3.4 신규] 실시간 자막 변환 API
+app.post("/api/live-transform", async (req, res) => {
+    try {
+        // 1. 프론트엔드에서 보낸 '텍스트', '작업 모드', '사용할 모델'을 받습니다.
+        const { text, mode, modelId } = req.body; // mode: 'translate' or 'summarize'
+
+        if (!text) {
+            return res.status(400).json({ message: "변환할 텍스트가 필요합니다." });
+        }
+
+        const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+        const model = genAI.getGenerativeModel({ model: modelId || "gemini-flash-latest" });
+
+        // 2. '모드'에 따라 AI에게 다른 지시를 내립니다.
+        const prompt = mode === 'translate'
+            ? `다음 영어 문장을 한국어로 자연스럽게 번역해줘. 다른 설명 없이 오직 번역된 문장만 답변해줘:\n\n"${text}"`
+            : `다음 문장의 핵심 내용을 한국어로 한 문장 요약해줘. 다른 설명 없이 오직 요약된 문장만 답변해줘:\n\n"${text}"`;
+
+        const result = await model.generateContent(prompt);
+        const transformedText = result.response.text();
+
+        // 3. 변환된 텍스트를 프론트엔드로 다시 보내줍니다.
+        res.json({ transformedText });
+
+    } catch (error) {
+        console.error("v3.4 Live Transform API Error:", error.message);
+        res.status(500).json({ message: "실시간 자막 변환 중 오류가 발생했습니다." });
+    }
+});
+
+// 📜 [v3.4 신규] 유튜브 자막 데이터 공급 API
+app.get('/api/get-transcript/:videoId', async (req, res) => {
+    try {
+        const { videoId } = req.params;
+        if (!videoId) {
+            return res.status(400).json({ message: "비디오 ID가 필요합니다." });
+        }
+        
+        // 파이썬 서버의 자막 추출 API를 호출합니다.
+        const pythonServerUrl = 'http://localhost:8001';
+        const response = await axios.post(`${pythonServerUrl}/youtube-transcript`, {
+            url: `https://www.youtube.com/watch?v=${videoId}`
+        });
+
+        // 파이썬 서버가 보내준 자막 데이터(segments)를 그대로 프론트엔드로 전달합니다.
+        res.json(response.data);
+
+    } catch (error) {
+        console.error("v3.4 Get Transcript API Error:", error.response ? error.response.data : error.message);
+        res.status(500).json({ message: "자막 데이터를 가져오는 중 오류가 발생했습니다." });
+    }
+});
+
 // --- 7. 서버 실행 (가장 마지막에!) ---
 async function startServer() {
     console.log('[Server Startup] 서버 시작 절차를 개시합니다...');

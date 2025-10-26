@@ -61,12 +61,43 @@ function renderMessageParts(parts, role, receivedAt) {
         partContent = createDOMElement('div', { className: 'timeline-container' });
 
         // [핵심] 타임라인 컨테이너 맨 위에 토글 버튼을 추가합니다.
-        const commentaryToggleBtn = createDOMElement('button', { 
+        const modeControlContainer = createDOMElement('div', { className: 'commentary-mode-controls' });
+        
+        // 1. '해설 ON/OFF' 버튼 (기능은 그대로, 위치만 이동)
+        const commentaryToggleBtn = createDOMElement('button', {
             id: `commentary-toggle-${timelineData.videoId}`,
             className: 'commentary-toggle-btn'
-        }, "🎙️ 해설 ON");
+        }); // 텍스트는 나중에 엔진이 설정합니다.
         commentaryToggleBtn.addEventListener('click', () => CommentaryEngine.toggle());
-        partContent.appendChild(commentaryToggleBtn);
+
+        // 2. 새로운 '스크립트 모드' 선택 버튼 그룹
+        const scriptModeSelector = createDOMElement('div', { className: 'script-mode-selector' });
+        const modes = { 
+            original: '원본', 
+            translate: '실시간 번역', 
+            summarize: '실시간 요약' 
+        };
+
+        for (const [mode, text] of Object.entries(modes)) {
+            const btn = createDOMElement('button', {
+                className: `script-mode-btn ${mode === 'original' ? 'active' : ''}`,
+                'data-mode': mode
+            }, text);
+            
+            // 버튼 클릭 시 CommentaryEngine의 setScriptMode 함수를 호출하도록 연결합니다.
+            btn.addEventListener('click', (e) => {
+                // CommentaryEngine에게 "모드를 바꿔줘!" 라고 알립니다.
+                CommentaryEngine.setScriptMode(mode, e.currentTarget.parentElement);
+            });
+            scriptModeSelector.appendChild(btn);
+        }
+
+        // 3. 제어판에 두 종류의 버튼을 모두 추가합니다.
+        modeControlContainer.appendChild(commentaryToggleBtn);
+        modeControlContainer.appendChild(scriptModeSelector);
+
+        // 4. 최종적으로 제어판을 화면에 추가합니다.
+        partContent.appendChild(modeControlContainer);
 
         // 1. 상단 개요 렌더링 
         if (timelineData.overview) {
@@ -147,12 +178,23 @@ function renderMessageParts(parts, role, receivedAt) {
                                 events: {
                                     // 1. [핵심] 'onReady' 이벤트가 발생하면 (플레이어가 준비되면) CommentaryEngine을 시작합니다.
                                     'onReady': (event) => {
-                                        console.log("YouTube Player is ready! Starting Commentary Engine...");
-                                        if (timelineData.chapters && timelineData.chapters.length > 0) {
-                                            const toggleButton = document.getElementById(`commentary-toggle-${timelineData.videoId}`);
-                                            // ▼▼▼ [✅ 롤백] videoId를 전달하지 않는 원래 버전으로 되돌립니다. ▼▼▼
-                                            CommentaryEngine.start(player, timelineData.chapters, toggleButton);
-                                        }
+                                        console.log("YouTube Player is ready! Starting v3.4 Live Script Engine...");
+
+                                        // 1. 필요한 모든 UI 요소를 정확하게 찾습니다.
+                                        const toggleButton = document.getElementById(`commentary-toggle-${timelineData.videoId}`);
+                                        // '모드 제어판' 전체 컨테이너를 찾습니다.
+                                        const modeControlContainer = toggleButton.closest('.commentary-mode-controls');
+                                        const scriptModeSelector = modeControlContainer.querySelector('.script-mode-selector');
+
+                                        // 2. [핵심] 준비된 'player' 객체와 함께, 'videoId'를 명시적으로 전달합니다.
+                                        // 'event.target'이 바로 완전히 준비된 'player' 객체입니다.
+                                        CommentaryEngine.start(
+                                            event.target, 
+                                            timelineData.videoId, 
+                                            timelineData.chapters, 
+                                            toggleButton, 
+                                            scriptModeSelector
+                                        );
                                     },
                                     // 2. [기존 로직] 'onStateChange' 이벤트는 스크롤 싱크 기능을 그대로 담당합니다.
                                     'onStateChange': (event) => {
