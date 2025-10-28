@@ -30,11 +30,14 @@ async function fetchDailySummaries() {
 // ✨ API 호출: 최신 주간 메타 성찰
 async function fetchLatestMetaInsight() {
     try {
-        const res = await fetch('/api/emotion-meta');
-        if (!res.ok) throw new Error('메타 성찰 데이터 로드 실패');
-        return await res.json();
+        // [핵심] 이제 안전한 GET 방식의 '/api/latest-weekly-report' API를 호출합니다.
+        const res = await fetch('/api/latest-weekly-report');
+        if (!res.ok) throw new Error('최신 주간 보고서 데이터 로드 실패');
+        
+        const data = await res.json();
+        return data.ok ? data : null;
     } catch (e) {
-        console.error('[LunaDiary] emotion-meta API 오류:', e);
+        console.error('[LunaDiary] latest-weekly-report API 오류:', e);
         return null;
     }
 }
@@ -72,7 +75,6 @@ function renderEmotionChart(canvas, chartData) {
                 legend: { display: false },
                 title: { display: false },
 
-                // ▼▼▼▼▼ 바로 이 부분을 아래의 최종 코드로 교체해주세요 ▼▼▼▼▼
                 tooltip: {
                     // 툴팁 상자 스타일
                     backgroundColor: bgSecondary,
@@ -141,7 +143,7 @@ function renderEmotionInsight(container, summary) { // 'summary'는 latestSummar
       </div>`;
 }
 
-// '성장 일기' 타임라인 렌더링 (진짜 최종 수정본)
+// '성장 일기' 타임라인 렌더링 
 function renderReflectionTimeline(container, summaries) {
     if (!container) return;
     const textColor = getComputedStyle(document.documentElement).getPropertyValue('--text-color-secondary').trim();
@@ -196,30 +198,56 @@ function renderReflectionTimeline(container, summaries) {
 }
 
 // ✨ 주간 메타 성찰 UI를 렌더링하는 새로운 함수
-function renderMetaInsight(container, insight) {
+function renderMetaInsight(container, report) {
     if (!container) return;
-    const textColor = getComputedStyle(document.documentElement).getPropertyValue('--text-color-primary').trim();
     const secondaryColor = getComputedStyle(document.documentElement).getPropertyValue('--text-color-secondary').trim();
 
-    if (!insight || !insight.narrative) {
-        container.innerHTML = `<p style="color:${secondaryColor};">표시할 주간 메타 성찰이 아직 없습니다. (매주 일요일 자정에 자동 생성됩니다)</p>`;
+    if (!report || !report.narrative) {
+        container.innerHTML = `<p style="color:${secondaryColor}; margin-top: 10px;">표시할 주간 보고서가 아직 없습니다.</p>`;
         return;
     }
 
-    const dominantEmoji = emotionEmojiMap[insight.dominant_emotion] || '🤔';
+    const { range, narrative, stats } = report;
+
+    // --- [✨ 진짜 최종 수정] 모든 데이터의 존재 여부를 한 단계씩 안전하게 확인합니다. ---
     
+    // 1. stats 객체가 없는 경우
+    if (!stats) {
+        container.innerHTML = `
+            <div class="weekly-insight-card">
+                <h4 class="weekly-insight-card__title">✨ 루나의 주간 성찰 리포트</h4>
+                <p class="weekly-insight-card__narrative">"${narrative}"</p>
+            </div>`;
+        return;
+    }
+
+    // 2. stats는 있지만, 상세 데이터가 부족할 경우를 대비한 기본값 설정
+    const startDate = range?.startISO ? new Date(range.startISO).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' }) : '정보 없음';
+    const endDate = range?.endISO ? new Date(new Date(range.endISO).getTime() - 86400000).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' }) : '';
+    
+    // [핵심] 바로 이 부분에서 오류가 발생했습니다. distribution이 비어있을 수 있습니다.
+    const dominantOverall = stats.emotionStats?.overall?.distribution?.[0];
+    
+    const dominantEmoji = dominantOverall ? emotionEmojiMap[dominantOverall.emotion] || '🤔' : '🤔';
+    const dominantEmotionText = dominantOverall ? dominantOverall.emotion : '기록 없음';
+    const avgMinutesText = stats.sessionStats?.avgMinutes ?? '0'; // ?? 연산자로 null/undefined일 경우 0으로 처리
+    const volatilityText = stats.emotionStats?.focus?.volatility ?? 'N/A';
+
+    // 3. 이제 모든 데이터가 안전하게 준비되었으므로, 최종 UI를 그립니다.
     container.innerHTML = `
-        <div style="background-color: var(--background-color-secondary); border-left: 5px solid var(--primary-color); padding: 15px 20px; border-radius: 8px;">
-            <p style="margin: 0; color: ${textColor}; white-space: pre-wrap; line-height: 1.6;">${insight.narrative}</p>
-            <div style="margin-top: 15px; font-size: 0.9em; color: ${secondaryColor};">
-                <strong>주간 요약:</strong> ${dominantEmoji} ${insight.dominant_emotion}
+        <div class="weekly-insight-card">
+            <h4 class="weekly-insight-card__title">✨ 루나의 주간 성찰 리포트</h4>
+            <p class="weekly-insight-card__narrative">"${narrative}"</p>
+            <div class="weekly-insight-card__stats">
+                <span>🗓️ <strong>기간:</strong> ${startDate} ~ ${endDate}</span>
+                <span>${dominantEmoji} <strong>주요 감정:</strong> ${dominantEmotionText}</span>
+                <span>⏱️ <strong>평균 집중:</strong> ${avgMinutesText}분</span>
+                <span>📈 <strong>감정 변동성(Focus):</strong> ${volatilityText}</span>
             </div>
         </div>
     `;
 }
 
-// --- 최종 Export ---
-// --- 최종 Export ---
 export const LunaDiary = {
     async render() {
         // 1. UI 컨테이너들을 가져옵니다.
@@ -232,7 +260,7 @@ export const LunaDiary = {
         // 2. 로딩 메시지를 먼저 표시합니다.
         if (insightBox) insightBox.innerHTML = `<p style="color:var(--text-color-secondary);">감정 데이터를 불러오는 중...</p>`;
         if (diaryBox) diaryBox.innerHTML = `<p style="color:var(--text-color-secondary);">루나의 일기를 정리하는 중...</p>`;
-        if (metaBox) metaBox.innerHTML = `<p style="color:var(--text-color-secondary);">주간 메타 성찰을 불러오는 중...</p>`;
+        if (metaBox) metaBox.innerHTML = `<p style="color:var(--text-color-secondary);">주간 보고서를 생성하는 중...</p>`;
 
         // 1. 모든 데이터를 병렬로 불러옵니다.
         const [stats, summaries, metaInsight] = await Promise.all([
@@ -244,8 +272,6 @@ export const LunaDiary = {
         // 2. 감정 차트 렌더링
         const renderedChart = renderEmotionChart(chartCanvas, stats);
         renderCustomLegend(legendBox, renderedChart.labels, renderedChart.colors);
-
-        // ▼▼▼▼▼ 바로 이 부분을 다시 수정합니다! ▼▼▼▼▼
 
         // 3. '오늘의 일기'와 '과거의 일기'로 데이터를 분리합니다.
         const latestSummary = summaries && summaries.length > 0 ? summaries[0] : null;

@@ -664,14 +664,6 @@ function saveWeeklyMetaInsight(insight) {
     }
 }
 
-// (메타 성찰) : 가장 최신의 '주간 메타 성찰'을 가져오는 함수
-function getLatestWeeklyMetaInsight() {
-    try {
-        const stmt = db.prepare('SELECT * FROM weekly_meta_insights ORDER BY week_start DESC LIMIT 1');
-        return stmt.get();
-    } catch (e) { return null; }
-}
-
 // ✨ ----- 13차 진화 (자율 루프) 함수들 ----- ✨
 
 // -- 사용자 설정 (user_settings) 관련 --
@@ -848,6 +840,144 @@ function getEmotionsForSession(focusSessionId) {
     }
 }
 
+// --- Weekly Emotion Report Functions ---
+
+// ISO 날짜 문자열을 받아 해당 주의 시작(월요일)과 끝(다음 주 월요일)을 반환하는 헬퍼 함수
+function getWeekRange(dateString) {
+    const d = new Date(dateString);
+    const day = d.getDay(); // 0 (일요일) - 6 (토요일)
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1); // 월요일을 주의 시작으로 설정
+    
+    const monday = new Date(d.setDate(diff));
+    monday.setHours(0, 0, 0, 0);
+
+    const nextMonday = new Date(monday);
+    nextMonday.setDate(monday.getDate() + 7);
+
+    return {
+        startISO: monday.toISOString(),
+        endISO: nextMonday.toISOString()
+    };
+}
+
+// 감정 데이터의 분포(distribution)와 변동성(volatility)을 계산하는 헬퍼 함수
+function analyzeEmotionData(logs) {
+    const tally = {};
+    let totalWeight = 0;
+    const intensities = [];
+
+    for (const log of logs) {
+        const emotion = (log.emotion || "neutral").trim();
+        // 감정 강도가 없다면 0.5로 간주, 0~1 사이로 제한
+        const intensity = typeof log.intensity === 'number' ? Math.max(0, Math.min(1, log.intensity)) : 0.5;
+        
+        tally[emotion] = (tally[emotion] || 0) + (0.5 + intensity);
+        totalWeight += (0.5 + intensity);
+        intensities.push(intensity);
+    }
+
+    const distribution = Object.entries(tally)
+        .map(([emotion, value]) => ({ emotion, value, percentage: totalWeight ? (value / totalWeight) * 100 : 0 }))
+        .sort((a, b) => b.value - a.value);
+
+    let volatility = 0;
+    if (intensities.length > 1) {
+        const mean = intensities.reduce((a, b) => a + b, 0) / intensities.length;
+        const variance = intensities.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / (intensities.length - 1);
+        volatility = Math.sqrt(variance); // 표준편차
+    }
+
+    return {
+        distribution,
+        volatility: Number(volatility.toFixed(2))
+    };
+}
+
+// 특정 주의 모든 데이터를 가져와 분석하는 메인 함수
+function getWeeklyReportData(dateString = new Date().toISOString()) {
+    try {
+        const { startISO, endISO } = getWeekRange(dateString);
+
+        // 1. 해당 주간의 '집중 세션' 데이터를 가져옵니다.
+        const sessions = db.prepare(`
+            SELECT start_time, duration_minutes FROM focus_sessions 
+            WHERE start_time >= ? AND start_time < ? AND duration_minutes IS NOT NULL
+        `).all(startISO, endISO);
+
+        // 2. 해당 주간의 모든 '감정 로그'를 가져옵니다.
+        const allLogs = db.prepare(`
+            SELECT emotion, intensity, source, created_at FROM luna_emotion_log
+            WHERE created_at >= ? AND created_at < ?
+        `).all(startISO, endISO);
+
+        // 3. 통계를 계산합니다.
+        const totalDuration = sessions.reduce((sum, s) => sum + s.duration_minutes, 0);
+        const avgDuration = sessions.length > 0 ? Math.round(totalDuration / sessions.length) : 0;
+        
+        const hourCounts = {};
+        sessions.forEach(s => {
+            const hour = new Date(s.start_time).getHours();
+            hourCounts[hour] = (hourCounts[hour] || 0) + 1;
+        });
+        const peakHour = Object.keys(hourCounts).length > 0 ? 
+            Object.entries(hourCounts).sort((a, b) => b[1] - a[1])[0][0] : null;
+
+        const focusLogs = allLogs.filter(log => log.source === 'focus' || !log.source); // source가 없는 경우 focus로 간주
+        const youtubeLogs = allLogs.filter(log => log.source === 'youtube');
+
+        const focusAnalysis = analyzeEmotionData(focusLogs);
+        const youtubeAnalysis = analyzeEmotionData(youtubeLogs);
+        const overallAnalysis = analyzeEmotionData(allLogs);
+
+        // 4. 최종 보고서 객체를 구성하여 반환합니다.
+        return {
+            range: { startISO, endISO },
+            sessionStats: {
+                count: sessions.length,
+                avgMinutes: avgDuration,
+                peakHour: peakHour ? Number(peakHour) : null
+            },
+            emotionStats: {
+                overall: overallAnalysis,
+                focus: focusAnalysis,
+                youtube: youtubeAnalysis
+            }
+        };
+
+    } catch (error) {
+        console.error('[DB Manager] 주간 보고서 데이터 생성 실패:', error);
+        return null;
+    }
+}
+
+function getLatestWeeklyReport() {
+    try {
+        // [핵심] 몬드님의 테이블 이름 'weekly_meta_insights'를 사용합니다.
+        const stmt = db.prepare(`
+            SELECT week_start, days_range, summary_json, narrative 
+            FROM weekly_meta_insights 
+            ORDER BY created_at DESC 
+            LIMIT 1
+        `);
+        const row = stmt.get();
+        if (!row) return null;
+
+        // [핵심] 몬드님의 컬럼 이름('week_start')을 사용하여 range 객체를 만듭니다.
+        const startDate = new Date(row.week_start);
+        const endDate = new Date(startDate);
+        endDate.setDate(startDate.getDate() + row.days_range);
+        
+        return {
+            range: { startISO: startDate.toISOString(), endISO: endDate.toISOString() },
+            stats: JSON.parse(row.summary_json),
+            narrative: row.narrative
+        };
+    } catch (error) {
+        console.error("[DB Manager] 최신 주간 보고서 조회 실패:", error);
+        return null;
+    }
+}
+
 module.exports = {
     initializeDatabase,
     getChatHistory,
@@ -879,7 +1009,7 @@ module.exports = {
     saveDailyNarrative,
     getDailySummaries,
     saveWeeklyMetaInsight,     
-    getLatestWeeklyMetaInsight,
+    
     getUserSetting,
     saveUserSetting,
     startActivityLog,
@@ -890,5 +1020,8 @@ module.exports = {
     logLunaEmotion,
     startFocusSession,
     endFocusSession,
-    getEmotionsForSession   
+    getEmotionsForSession,
+    getWeeklyReportData,
+    getWeekRange,
+    getLatestWeeklyReport   
 };

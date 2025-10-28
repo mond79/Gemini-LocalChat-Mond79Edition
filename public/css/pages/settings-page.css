@@ -79,3 +79,67 @@
     .settings-nav li { flex-shrink: 0; }
     .settings-content { padding: 20px; }
 }
+
+/* --- 📊 v3.3.2 주간 성찰 리포트 카드 --- */
+
+/* '주간 메타 성찰' 섹션 전체를 감싸는 컨테이너 */
+#meta-insight-container {
+    margin-top: 20px;
+}
+
+/* 리포트 카드 자체의 스타일 */
+.weekly-insight-card {
+    background-color: var(--bg-sidebar);
+    border-left: 5px solid var(--accent-color);
+    padding: 20px 25px;
+    border-radius: 12px;
+    margin-top: 10px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    transition: all 0.3s ease;
+}
+
+/* 다크 모드일 때의 카드 스타일 */
+body.dark-mode .weekly-insight-card {
+    background-color: var(--bg-message-user);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+/* 카드 제목 */
+.weekly-insight-card__title {
+    margin: 0 0 15px 0;
+    color: var(--text-primary);
+    font-size: 1.15em;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* 서사 요약 (AI가 생성한 문장) */
+.weekly-insight-card__narrative {
+    margin: 0;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    line-height: 1.7;
+    font-size: 1.05em;
+    font-style: italic;
+    opacity: 0.95;
+}
+
+/* 통계 데이터 영역 */
+.weekly-insight-card__stats {
+    margin-top: 20px;
+    padding-top: 15px;
+    border-top: 1px solid var(--border-secondary);
+    font-size: 0.9em;
+    color: var(--text-secondary);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+}
+
+.weekly-insight-card__stats span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}

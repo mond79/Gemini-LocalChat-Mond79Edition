@@ -3240,6 +3240,54 @@ async function generateContentWithFallback(prompt, primaryModelId = 'gemini-flas
     }
 }
 
+// 주간 통계 데이터를 바탕으로, LLM 또는 템플릿을 이용해 자연어 리포트를 생성하는 헬퍼 함수
+async function generateWeeklyNarrative(stats) {
+    // 1. AI에게 보낼 핵심 데이터만 간결하게 요약합니다.
+    const payload = {
+        sessionCount: stats.sessionStats.count,
+        avgMinutes: stats.sessionStats.avgMinutes,
+        peakHour: stats.sessionStats.peakHour,
+        dominantOverall: stats.emotionStats.overall.distribution[0]?.emotion || '정보 없음',
+        dominantFocus: stats.emotionStats.focus.distribution[0]?.emotion || '정보 없음',
+        dominantYouTube: stats.emotionStats.youtube.distribution[0]?.emotion || '정보 없음',
+        volatilityFocus: stats.emotionStats.focus.volatility,
+        volatilityYouTube: stats.emotionStats.youtube.volatility
+    };
+
+    const prompt = `
+당신은 사용자의 주간 활동 및 감정 데이터를 분석하여 따뜻한 피드백을 제공하는 AI 라이프 코치 '루나'입니다.
+주어진 [주간 분석 데이터]를 바탕으로, 3~4문장의 짧고 친근한 한국어 요약 리포트를 작성해주세요.
+과장하지 말고, 긍정적인 격려와 함께 다음 주를 위한 가벼운 제안을 한 가지 포함해주세요. 이모지는 문장 끝에 딱 한 개만 사용해주세요.
+
+[주간 분석 데이터]
+${JSON.stringify(payload, null, 2)}
+`;
+
+    try {
+        // 2. [플랜 A] 우리가 만든 '폴백 기능이 있는 AI 호출기'를 사용해 리포트 생성을 시도합니다.
+        const result = await generateContentWithFallback(prompt, 'gemini-flash-latest', 'gemini-1.5-flash');
+        const text = result.response.text();
+        if (text && text.trim().length > 10) {
+            return text.trim();
+        }
+    } catch (error) {
+        console.error("주간 리포트 생성 중 LLM 오류 발생:", error.message);
+        // 오류가 발생해도 괜찮습니다. 아래의 플랜 B가 실행됩니다.
+    }
+
+    // 3. [플랜 B] AI 호출에 실패하면, 안정적인 로컬 템플릿을 사용해 보고서를 만듭니다.
+    console.warn("LLM 호출 실패. 로컬 템플릿을 사용하여 주간 리포트를 생성합니다.");
+    let narrative = `이번 주에는 총 ${payload.sessionCount}번, 평균 ${payload.avgMinutes}분씩 집중하셨네요. `;
+    if (payload.peakHour !== null) {
+        narrative += `${payload.peakHour}시 즈음에 가장 집중이 잘 되셨어요. `;
+    }
+    if (payload.dominantOverall !== '정보 없음') {
+        narrative += `전반적으로 '${payload.dominantOverall}' 감정이 많았던 한 주였습니다. `;
+    }
+    narrative += "다음 주도 멋진 한 주가 되기를 응원할게요! 😊";
+    return narrative;
+}
+
 // ✍️ 실시간 자막 변환 API
 app.post("/api/live-transform", async (req, res) => {
     try {
@@ -3428,6 +3476,57 @@ ${emotionSummary || "기록된 감정이 없습니다."}
     }
 });
 
+// 📊 주간 감정 리포트 API
+app.get("/api/weekly-emotion-report", async (req, res) => {
+    try {
+        // 1. [기존] DB 매니저를 통해 이번 주 데이터를 분석합니다.
+        const stats = dbManager.getWeeklyReportData();
+
+        // 2. [✨ 핵심 안정성 보강] stats가 비어있거나, 분석할 데이터가 전혀 없는 경우를 확인합니다.
+        if (!stats || (stats.sessionStats.count === 0 && stats.emotionStats.overall.distribution.length === 0)) {
+            
+            // 3. 데이터가 없을 경우, AI에게 분석을 맡기지 않고, 미리 준비된 친절한 메시지를 보냅니다.
+            return res.json({
+                ok: true,
+                // 'narrative'에 AI 대신 우리가 직접 작성한 안내 메시지를 담아 보냅니다.
+                narrative: "이번 주에는 분석할 활동 기록이 충분하지 않네요. 다음 주에는 루나와 더 많은 시간을 함께 보내요! ✨",
+                stats: stats,
+                // 'range' 정보는 'getWeekRange' 함수를 직접 호출하여 생성합니다.
+                range: stats ? stats.range : getWeekRange(new Date().toISOString())
+            });
+        }
+
+        // 4. [기존] 데이터가 충분할 경우에만, AI 작가에게 '서사 요약'을 요청합니다.
+        const narrative = await generateWeeklyNarrative(stats);
+
+        // 5. [기존] 최종 분석 결과를 프론트엔드로 보냅니다.
+        res.json({
+            ok: true,
+            range: stats.range,
+            stats: stats,
+            narrative: narrative
+        });
+    } catch (err) {
+        console.error("주간 리포트 API 오류:", err);
+        res.status(500).json({ ok: false, error: "주간 리포트를 생성하는 중 오류가 발생했습니다." });
+    }
+});
+
+// 📜 가장 최신의 주간 보고서를 조회하는 API
+app.get("/api/latest-weekly-report", (req, res) => {
+    try {
+        // (이 함수는 다음 단계에서 db-manager.js에 만들 것입니다)
+        const report = dbManager.getLatestWeeklyReport();
+        if (report) {
+            res.json({ ok: true, ...report });
+        } else {
+            res.json({ ok: false, narrative: "생성된 주간 보고서가 아직 없습니다." });
+        }
+    } catch (err) {
+        console.error("최신 주간 보고서 조회 API 오류:", err);
+        res.status(500).json({ ok: false, error: "보고서를 가져오는 중 오류 발생" });
+    }
+});
 // --- 7. 서버 실행 (가장 마지막에!) ---
 async function startServer() {
     console.log('[Server Startup] 서버 시작 절차를 개시합니다...');
