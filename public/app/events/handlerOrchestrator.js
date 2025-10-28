@@ -384,7 +384,35 @@ export const handlers = {
         handlers.handleSendMessage();
     },
     // =========================================================
-    async handleSendMessage() { if (CommentaryEngine.isOn) { const inputEl = document.getElementById('message-input'); const question = inputEl.value.trim(); if (question) { inputEl.value = ''; handlers.handleInputUpdate(); await CommentaryEngine.ask(question); } } else { await ChatService.sendMessage(); $('#file-process-options').style.display = 'none'; } },
+    async handleSendMessage() {
+        const inputEl = document.getElementById('message-input');
+        const input = inputEl.value.trim();
+        if (!input) return;
+
+        // [✅ 최종 수정] '맥락 전환' 키워드를 정의합니다.
+        const contextSwitchKeywords = ['새 주제:', '질문:', '검색:'];
+
+        // [✅ 최종 수정] '공부 시작' 명령어를 가장 먼저 확인합니다.
+        if (input.includes('공부 시작')) {
+            await ChatService.sendMessage();
+            $('#file-process-options').style.display = 'none';
+            return;
+        }
+
+        // [✅ 최종 수정] '영상 모드'이면서, '맥락 전환' 키워드가 없는 경우에만 영상 Q&A로 처리합니다.
+        const isVideoQaMode = CommentaryEngine.isOn && !contextSwitchKeywords.some(keyword => input.startsWith(keyword));
+        
+        if (isVideoQaMode) {
+            // 영상 Q&A 모드
+            inputEl.value = '';
+            handlers.handleInputUpdate();
+            await CommentaryEngine.ask(input);
+        } else {
+            // 일반 채팅 모드 (또는 맥락 전환이 감지된 경우)
+            await ChatService.sendMessage();
+            $('#file-process-options').style.display = 'none';
+        }
+    },
     handleCopyMessage(messageId) { if (!messageId) return; const session = appState.sessions[appState.activeSessionId]; if (!session) return; const message = session.history.find(m => m.id === messageId); if (!message) return; const textToCopy = message.parts.filter(p => p.type === 'text').map(p => p.text).join('\n\n'); if (textToCopy) { navigator.clipboard.writeText(textToCopy).then(() => { Toast.show('클립보드에 복사되었습니다.'); }).catch(err => { console.error('클립보드 복사 실패:', err); Toast.show('복사에 실패했습니다.'); }); } else { Toast.show('복사할 텍스트가 없습니다.'); } },
     handleCopyCodeBlock(buttonElement) { const wrapper = buttonElement.closest('.code-block-wrapper'); if (!wrapper) return; const codeElement = wrapper.querySelector('pre > code'); if (!codeElement) return; const codeText = codeElement.innerText; navigator.clipboard.writeText(codeText).then(() => { Toast.show('코드가 클립보드에 복사되었습니다.'); }).catch(err => { console.error('코드 블록 복사 실패:', err); Toast.show('코드 복사에 실패했습니다.'); }); },
     async handleRegenerate(messageId) { const sessionId = appState.activeSessionId; await ChatService.regenerate(sessionId, messageId); },

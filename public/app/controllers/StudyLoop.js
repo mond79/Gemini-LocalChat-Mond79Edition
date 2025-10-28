@@ -1,10 +1,13 @@
 // StudyLoop.js - 자율 공부/휴식 루프 UI 및 상태 관리
+import { appState } from '../state/AppState.js';
+import * as Session from '../state/SessionManager.js';
 
 // --- 모듈 상태 변수 ---
 let currentSession = {
     id: null,        // DB에 기록된 현재 활동 로그의 ID
     timer: null,     // setInterval 객체
-    container: null  // UI가 그려지고 있는 HTML 요소
+    container: null,  // UI가 그려지고 있는 HTML 요소
+    focusSessionId: null // 집중 세션 ID
 };
 
 // --- 내부 헬퍼 함수 ---
@@ -22,6 +25,14 @@ async function api(path, body) {
     } catch (error) {
         console.error(`[StudyLoop] API 오류 (${path}):`, error);
         return { success: false, message: error.message };
+    }
+}
+
+function stopAllTimers() {
+    if (currentSession.timer) {
+        clearInterval(currentSession.timer);
+        currentSession.timer = null;
+        console.log('[StudyLoop] 모든 타이머가 중지되었습니다.');
     }
 }
 
@@ -86,7 +97,23 @@ function renderBreakTimer(container, minutes) {
 async function handleFinish() {
     if (!currentSession.id) return;
 
-    const result = await StudyLoop.finish();
+    const result = await StudyLoop.finish(); // activity/finish 호출
+
+    // ▼▼▼ [✅ v3.3.2] 집중이 끝나면, /api/focus-session/end API를 호출합니다. ▼▼▼
+    if (currentSession.focusSessionId && result.durationMinutes) {
+        const analysisResult = await api('/api/focus-session/end', {
+            sessionId: currentSession.focusSessionId,
+            duration: result.durationMinutes
+        });
+        if (analysisResult.narrative) {
+            // AI가 생성한 분석 요약을 시스템 메시지로 보여줍니다.
+            const narrativeEvent = new CustomEvent('add-system-message', {
+                detail: { text: `🧘‍♀️ 집중 세션 분석:\n${analysisResult.narrative}` }
+            });
+            document.dispatchEvent(narrativeEvent);
+        }
+    }
+
     const event = new CustomEvent('add-system-message', {
         detail: { text: result.success ? `✅ 집중 시간이 종료되었습니다. (${result.durationMinutes}분)` : `❌ 타이머 종료 중 오류: ${result.message}` }
     });
@@ -95,14 +122,23 @@ async function handleFinish() {
     // ✨ 종료 후, '휴식 선택 UI'를 렌더링!
     if (currentSession.container) {
         const container = currentSession.container;
-        currentSession.container = null; // 컨테이너 참조 초기화
+        const messageId = container.closest('.message')?.dataset.messageId; // [핵심] 메시지 ID 찾기
+        
+        currentSession.container = null; // 참조 초기화
+
         StudyLoop.renderBreakChoices(container, (breakMinutes) => {
-            if (breakMinutes > 0) {
-                // 사용자가 휴식 시간을 선택하면 휴식 타이머 시작
-                renderBreakTimer(container, breakMinutes);
-            } else {
-                // 사용자가 '건너뛰기'를 선택하면 바로 다음 공부 세션 시작
+            if (breakMinutes < 0) { // '완전 종료'
+                const newParts = [{ type: 'text', text: '🧘‍♀️ 뽀모도로 세션을 모두 마쳤습니다. 수고하셨어요!' }];
+                // [핵심] appState의 원본 데이터를 직접 수정합니다.
+                if (messageId) {
+                    Session.updateMessageParts(appState, appState.activeSessionId, messageId, newParts);
+                }
+                container.innerHTML = `<p style="text-align:center;">${newParts[0].text}</p>`;
+                stopAllTimers();
+            } else if (breakMinutes === 0) {
                 startNextStudySession(container, 'skip');
+            } else {
+                renderBreakTimer(container, breakMinutes);
             }
         });
     }
@@ -126,10 +162,17 @@ export const StudyLoop = {
         const res = await api('/api/activity/start', { activityType: 'study', notes });
         if (res.success) {
             currentSession.id = res.logId;
+        // 활동이 시작되면, /api/focus-session/start API도 호출합니다. 
+            const focusRes = await api('/api/focus-session/start');
+            if (focusRes.sessionId) {
+                currentSession.focusSessionId = focusRes.sessionId;
+                console.log(`[StudyLoop] 새로운 집중 세션(ID: ${focusRes.sessionId})이 DB에 기록되었습니다.`);
+            }
         }
         return res;
     },
 
+    // 'finish' 함수 수정 (반환 값 변경)
     async finish() {
         if (!currentSession.id) return { success: false, message: '진행 중인 세션이 없습니다.' };
         if (currentSession.timer) clearInterval(currentSession.timer);
@@ -138,12 +181,40 @@ export const StudyLoop = {
         currentSession.id = null;
         currentSession.timer = null;
         
-        return await api('/api/activity/finish', { logId: logIdToFinish });
+        // 1. 서버(/api/activity/finish)로부터 응답을 받습니다.
+        //    예시 응답: { success: true, duration: 25 }
+        const resultFromApi = await api('/api/activity/finish', { logId: logIdToFinish });
+        
+        // 2. [핵심] 서버가 보내준 이름(resultFromApi.duration)을 
+        //    handleFinish 함수가 사용할 이름(durationMinutes)으로 바꿔서 새로운 객체를 만들어 반환합니다.
+        return {
+            success: resultFromApi.success,
+            durationMinutes: resultFromApi.duration, // `duration` 값을 `durationMinutes` 키에 할당
+            message: resultFromApi.message || ''
+        };
     },
     
+    forceStop() {
+        stopAllTimers();
+        // 1. [기존 로직] 모든 타이머의 '논리'를 멈춥니다.
+        if (currentSession.timer) {
+            clearInterval(currentSession.timer);
+            currentSession.timer = null;
+            console.log('[StudyLoop] 외부 요청에 의해 타이머가 강제 중지되었습니다.');
+        }
+        
+        // 2. [✨ 신규 추가] 화면에 남아있을 수 있는 '타이머 UI'를 정리합니다.
+        if (currentSession.container) {
+            currentSession.container.innerHTML = `<p style="text-align:center; color:var(--text-color-secondary);">🏃‍♀️ 다른 작업으로 인해 타이머가 중단되었습니다.</p>`;
+            // UI를 정리했으므로, 더 이상 참조할 필요가 없으니 깨끗하게 비웁니다.
+            currentSession.container = null;
+        }
+    },
+
     getCurrentSessionId: () => currentSession.id,
 
     renderTimerUI(container, seconds) {
+        
         if (currentSession.timer) clearInterval(currentSession.timer);
         
         currentSession.container = container;
@@ -192,6 +263,7 @@ export const StudyLoop = {
                     <button data-minutes="5" class="file-task-btn">5분 휴식</button>
                     <button data-minutes="10" class="file-task-btn">10분 휴식</button>
                     <button data-minutes="0" class="action-btn primary">바로 다음 세션</button>
+                    <button data-minutes="-1" class="danger-btn">완전 종료</button>
                 </div>
             </div>`;
         container.querySelectorAll('button').forEach(btn => {

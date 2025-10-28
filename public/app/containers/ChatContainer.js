@@ -80,14 +80,20 @@ function hideActiveActions(immediate = false) {
 function createAndCacheSessionView(sessionId) {
     const session = appState.sessions[sessionId];
     if (!session) return null;
+
+    // 1. [복원] 뷰를 새로 그립니다.
     const viewContainer = createDOMElement('div', { id: `session-view-${sessionId}`, className: 'message-list-container' });
     session.history.forEach((message) => {
         viewContainer.appendChild(createMessageElement(message, session));
     });
+
     applySyntaxHighlighting(viewContainer);
     renderMathInElement(viewContainer);
     elements.chatBox.appendChild(viewContainer);
+
+    // 2. [✨ 핵심 복원] 새로 그린 뷰를 다시 '캐시'에 저장합니다.
     sessionViewCache.set(sessionId, viewContainer);
+    
     return viewContainer;
 }
 
@@ -229,18 +235,32 @@ function _updateViewForSession(newSessionId) {
     if (isTransitioning) return;
 
     CommentaryEngine.stop();
-
     const parentContainer = elements.chatBox;
-    const outgoingView = parentContainer.querySelector('.message-list-container[style*="display: flex"]');
+
+    const outgoingView = parentContainer.querySelector('.message-list-container.view-active');
+    
+    // [✨ 핵심 수정] '유령 타이머'가 포함될 수 있는 낡은 캐시를 먼저 삭제합니다.
+    // 뽀모도로 메시지가 포함된 세션은 항상 새로 그리도록 만듭니다.
+    const sessionForView = appState.sessions[newSessionId];
+    const hasPomodoro = sessionForView && sessionForView.history.some(m => m.parts.some(p => p.type === 'study_timer'));
+    if (hasPomodoro) {
+        const oldView = sessionViewCache.get(newSessionId);
+        if (oldView) {
+            oldView.remove(); // DOM에서 완전히 제거
+            sessionViewCache.delete(newSessionId); // 캐시에서도 삭제
+        }
+    }
+    
+    // 이제 캐시를 확인합니다. (유령이 없다면 재사용, 있었다면 위에서 삭제됨)
     let incomingView = sessionViewCache.get(newSessionId);
     if (!incomingView) {
         incomingView = createAndCacheSessionView(newSessionId);
     }
-
-    if (!incomingView || (outgoingView && outgoingView.id === incomingView.id)) return;
+    
+    if (!incomingView || outgoingView === incomingView) return;
 
     isTransitioning = true;
-
+    
     try {
         const session = appState.sessions[newSessionId];
         const isEmpty = !session || session.history.length === 0;
@@ -248,36 +268,32 @@ function _updateViewForSession(newSessionId) {
         elements.welcomeContainer.classList.toggle('hidden', !isEmpty);
         elements.chatBoxWrapper.classList.toggle('hidden', isEmpty);
 
+        // '페이드 효과' 로직 복원
+        if (outgoingView) outgoingView.classList.remove('view-active');
+        incomingView.classList.add('view-active');
+        
         incomingView.style.opacity = '0';
-        incomingView.classList.add('view-transitioning');
         incomingView.style.display = 'flex';
 
-        if (outgoingView) {
-            outgoingView.classList.add('view-transitioning');
-        }
-        parentContainer.style.height = `${parentContainer.offsetHeight}px`;
-
         requestAnimationFrame(() => {
+            incomingView.style.transition = 'opacity 0.2s ease-in-out';
             incomingView.style.opacity = '1';
             if (outgoingView) {
+                outgoingView.style.transition = 'opacity 0.2s ease-in-out';
                 outgoingView.style.opacity = '0';
             }
-
             setTimeout(() => {
-                parentContainer.style.height = '';
-                incomingView.classList.remove('view-transitioning');
                 if (outgoingView) {
-                    outgoingView.classList.remove('view-transitioning');
                     outgoingView.style.display = 'none';
+                    outgoingView.style.transition = '';
                 }
+                incomingView.style.transition = '';
                 updateScrollShadows();
                 isTransitioning = false;
-            }, 300);
+            }, 200);
         });
 
-        // [MODIFIED] Always scroll to bottom, remove scrollPosition logic.
         parentContainer.scrollTop = parentContainer.scrollHeight;
-
         renderHeader(appState);
         renderModelSelector(appState);
         renderSystemPromptSelector(appState);

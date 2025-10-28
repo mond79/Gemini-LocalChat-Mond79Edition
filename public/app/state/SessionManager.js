@@ -1,6 +1,7 @@
 // [CoreDNA] A collection of pure functions for session and sidebar state manipulation.
 import { saveData } from '../../utils/storage.js';
 import * as Toast from '../../components/Toast.js';
+import { StudyLoop } from '../controllers/StudyLoop.js';
 
 // --- Helper ---
 function findItemRecursive(items, itemId, parent = null) {
@@ -38,6 +39,7 @@ function _checkLimitAndNotify(state, modelId, apiKeyIdentifier) {
 
 // --- Session Management ---
 export function newSession(state) {
+    StudyLoop.forceStop();
     const now = Date.now();
     const newId = `session-${now}`;
     const lastActiveModel = state.sessions[state.activeSessionId]?.model;
@@ -101,6 +103,7 @@ export function deleteSession(state, sessionId) {
     return state;
 }
 export function switchSession(state, sessionId) {
+    StudyLoop.forceStop();
     if (state.sessions[sessionId]) {
         state.activeSessionId = sessionId;
         state.attachedFiles = [];
@@ -348,5 +351,24 @@ export function resetAllSessions(state) {
     state.sidebarItems = [];
     state.activeSessionId = null;
     newSession(state); // newSession already saves
+    return state;
+}
+
+export function updateMessageParts(state, sessionId, messageId, newParts) {
+    const session = state.sessions[sessionId];
+    if (!session) {
+        console.warn(`[SessionManager] updateMessageParts: 세션 ID ${sessionId}를 찾을 수 없습니다.`);
+        return state;
+    }
+    
+    const message = session.history.find(m => m.id === messageId);
+    if (message) {
+        message.parts = newParts;
+        session.lastModified = Date.now();
+        saveData(state); // 변경사항을 영구 저장
+        console.log(`[SessionManager] 메시지 ID ${messageId}의 내용이 성공적으로 업데이트되었습니다.`);
+    } else {
+        console.warn(`[SessionManager] updateMessageParts: 메시지 ID ${messageId}를 세션 ${sessionId}에서 찾을 수 없습니다.`);
+    }
     return state;
 }

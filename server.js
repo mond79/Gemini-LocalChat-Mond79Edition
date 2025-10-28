@@ -370,7 +370,7 @@ async function youtubeVideoAssistant({ query, summarize = true, display = true }
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY); // AI 인스턴스를 한 번만 생성
     const model = genAI.getGenerativeModel({ model: 'gemini-flash-lite-latest' });
 
-    // --- [ChatGPT 제안 채택] 더 풍부해진 감정 탐지 로직 ---
+    // 더 풍부해진 감정 탐지 로직
     const detectEmotion = (text = "") => {
         const lower = text.toLowerCase();
         if (lower.includes("웃음") || lower.includes("재미") || lower.includes("ㅋㅋ") || lower.includes("funny")) return "funny";
@@ -3119,7 +3119,6 @@ app.post('/api/generate-commentary', async (req, res) => {
             return res.status(400).json({ message: '필수 파라미터가 누락되었습니다.' });
         }
 
-        // ▼▼▼ [✅ 1단계 수정] 이 부분을 추가합니다 ▼▼▼
         const cleanTextForTTS = sanitizeTextForTTS(text);
 
         const GOOGLE_TTS_URL = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${GOOGLE_API_KEY}`;
@@ -3128,7 +3127,7 @@ app.post('/api/generate-commentary', async (req, res) => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                // ▼▼▼ [✅ 1단계 수정] text를 cleanTextForTTS로 바꿉니다 ▼▼▼
+                
                 input: { text: cleanTextForTTS },
                 voice: { languageCode: 'ko-KR', name: voiceName || 'ko-KR-Wavenet-A' },
                 audioConfig: { 
@@ -3153,7 +3152,7 @@ app.post('/api/generate-commentary', async (req, res) => {
     }
 });
 
-// 🎙️ [v2.8.1 버전 복원] 하이브리드 영상 대화 통합 API
+// 🎙️ 하이브리드 영상 대화 통합 API
 app.post('/api/video-dialogue', async (req, res) => {
     try {
         const { question, segment, emotionState, modelId } = req.body;
@@ -3171,7 +3170,7 @@ app.post('/api/video-dialogue', async (req, res) => {
 [질문]
 "${question}"
 `;
-        const result = await model.generateContent(prompt);
+        const result = await generateContentWithFallback(prompt, modelId || "gemini-flash-latest", 'gemini-2.5-flash');
         const answerText = result.response.text();
         const cleanAnswerForTTS = sanitizeTextForTTS(answerText);
 
@@ -3203,7 +3202,45 @@ app.post('/api/video-dialogue', async (req, res) => {
     }
 });
 
-// ✍️ [v3.4 신규] 실시간 자막 변환 API
+// AI 콘텐츠 생성을 위한 폴백(Fallback) 기능이 포함된 헬퍼 함수
+async function generateContentWithFallback(prompt, primaryModelId = 'gemini-flash-latest', fallbackModelId = 'gemini-2.5-flash') {
+    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+
+    try {
+        // 1. [플랜 A] 기본 모델로 먼저 시도합니다.
+        console.log(`[AI Fallback] 1차 시도: ${primaryModelId} 모델로 요청...`);
+        const primaryModel = genAI.getGenerativeModel({ model: primaryModelId });
+        const result = await primaryModel.generateContent(prompt);
+        return result; // 성공 시 즉시 결과 반환
+
+    } catch (error) {
+        // 2. [오류 감지] '429 한도 초과' 또는 '503 서버 과부하' 오류인지 확인합니다.
+        //    오류 메시지에 해당 상태 코드가 포함되어 있는지 검사합니다.
+        const errorMessage = error.message || '';
+        if (errorMessage.includes('429') || errorMessage.includes('503')) {
+            
+            const reason = errorMessage.includes('429') ? '할당량 초과' : '서버 과부하';
+            console.warn(`[AI Fallback] 경고: ${primaryModelId} 모델에 문제가 발생했습니다 (${reason}). 폴백 모델로 재시도합니다...`);
+            
+            // 3. [플랜 B] 폴백 모델로 다시 시도합니다.
+            try {
+                console.log(`[AI Fallback] 2차 시도: ${fallbackModelId} 모델로 요청...`);
+                const fallbackModel = genAI.getGenerativeModel({ model: fallbackModelId });
+                const fallbackResult = await fallbackModel.generateContent(prompt);
+                return fallbackResult; // 재시도 성공 시 결과 반환
+            } catch (fallbackError) {
+                console.error(`[AI Fallback] 최종 실패: 폴백 모델(${fallbackModelId}) 호출 중에도 오류가 발생했습니다.`, fallbackError);
+                throw fallbackError; // 최종 실패 시 오류 전파
+            }
+        } else {
+            // 그 외 다른 종류의 오류일 경우, 그대로 전파합니다.
+            console.error(`[AI Fallback] 1차 시도 중 예상치 못한 오류 발생:`, error);
+            throw error;
+        }
+    }
+}
+
+// ✍️ 실시간 자막 변환 API
 app.post("/api/live-transform", async (req, res) => {
     try {
         // 1. 프론트엔드에서 보낸 '텍스트', '작업 모드', '사용할 모델'을 받습니다.
@@ -3221,7 +3258,7 @@ app.post("/api/live-transform", async (req, res) => {
             ? `다음 영어 문장을 한국어로 자연스럽게 번역해줘. 다른 설명 없이 오직 번역된 문장만 답변해줘:\n\n"${text}"`
             : `다음 문장의 핵심 내용을 한국어로 한 문장 요약해줘. 다른 설명 없이 오직 요약된 문장만 답변해줘:\n\n"${text}"`;
 
-        const result = await model.generateContent(prompt);
+        const result = await generateContentWithFallback(prompt);
         const transformedText = result.response.text();
 
         // 3. 변환된 텍스트를 프론트엔드로 다시 보내줍니다.
@@ -3233,7 +3270,7 @@ app.post("/api/live-transform", async (req, res) => {
     }
 });
 
-// 📜 [v3.4 신규] 유튜브 자막 데이터 공급 API
+// 📜 유튜브 자막 데이터 공급 API
 app.get('/api/get-transcript/:videoId', async (req, res) => {
     try {
         const { videoId } = req.params;
@@ -3256,7 +3293,7 @@ app.get('/api/get-transcript/:videoId', async (req, res) => {
     }
 });
 
-// 🎭 [v3.3.1 신규] 실시간 감정 및 코멘트 분석 API
+// 🎭 실시간 감정 및 코멘트 분석 API
 app.post("/api/analyze-emotion", async (req, res) => {
     try {
         const { text, modelId } = req.body;
@@ -3290,7 +3327,7 @@ app.post("/api/analyze-emotion", async (req, res) => {
 "${text}"
 `;
 
-        const result = await model.generateContent(prompt);
+        const result = await generateContentWithFallback(prompt);
         const responseText = result.response.text();
         
         // AI가 보낸 텍스트에서 JSON 부분만 안전하게 추출합니다.
@@ -3308,7 +3345,7 @@ app.post("/api/analyze-emotion", async (req, res) => {
     }
 });
 
-// 💾 [v3.3.1 신규] 루나의 감정 로그를 DB에 기록하는 API
+// 💾 루나의 감정 로그를 DB에 기록하는 API
 app.post('/api/log-emotion', (req, res) => {
     try {
         const logData = req.body;
@@ -3327,6 +3364,67 @@ app.post('/api/log-emotion', (req, res) => {
     } catch (error) {
         console.error("v3.3.1 Log Emotion API Error:", error.message);
         res.status(500).json({ message: "감정 기록 중 서버 오류가 발생했습니다." });
+    }
+});
+
+// 🧘 집중 세션 시작 API
+app.post('/api/focus-session/start', (req, res) => {
+    try {
+        // 1. dbManager에게 새로운 집중 세션을 시작하라고 알리고, 세션 ID를 받습니다.
+        const sessionId = dbManager.startFocusSession();
+        if (sessionId) {
+            // 2. 성공하면, 프론트엔드에 세션 ID를 알려줍니다. (나중에 세션을 종료할 때 필요)
+            res.status(200).json({ sessionId: sessionId, message: "집중 세션이 시작되었습니다." });
+        } else {
+            throw new Error("DB에서 세션 ID를 생성하지 못했습니다.");
+        }
+    } catch (error) {
+        console.error("v3.3.2 Focus Start API Error:", error.message);
+        res.status(500).json({ message: "집중 세션 시작 중 서버 오류가 발생했습니다." });
+    }
+});
+
+// 🧘 집중 세션 종료 및 분석 API
+app.post('/api/focus-session/end', async (req, res) => {
+    try {
+        const { sessionId, duration } = req.body;
+        if (!sessionId || !duration) {
+            return res.status(400).json({ message: "세션 ID와 지속 시간이 필요합니다." });
+        }
+
+        // 1. [핵심] DB에서 해당 집중 세션 시간 동안 기록된 '루나의 감정 로그'를 모두 가져옵니다.
+        const emotions = dbManager.getEmotionsForSession(sessionId); // (이 함수는 다음 단계에서 만들 것입니다)
+        
+        // 2. 가져온 감정 데이터를 바탕으로 Gemini AI에게 보낼 '분석 보고서' 프롬프트를 만듭니다.
+        const emotionSummary = emotions.map(e => e.emotion).join(', '); // 예: "tense, tense, funny, calm, ..."
+        
+        const prompt = `
+당신은 사용자의 집중 시간 동안 기록된 감정 데이터를 분석하는 심리 분석가 '루나'입니다.
+주어진 [감정 흐름] 데이터를 보고, 이 집중 세션에 대한 1~2문장의 짧고 따뜻한 격려가 담긴 '서사 요약(Narrative Summary)'을 생성해주세요.
+
+[집중 시간]
+${duration}분
+
+[감정 흐름]
+${emotionSummary || "기록된 감정이 없습니다."}
+
+[출력 예시]
+"이번 집중 시간에는 초반에 긴장감이 높았지만, 이내 유쾌한 순간을 거쳐 차분하게 마무리하셨네요. 정말 수고하셨어요!"
+`;
+
+        const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+        const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
+        const result = await generateContentWithFallback(prompt);
+        const narrativeSummary = result.response.text();
+
+        // 3. 분석된 결과(서사 요약)와 함께 세션 종료 정보를 DB에 최종 업데이트합니다.
+        dbManager.endFocusSession(sessionId, duration, emotions, narrativeSummary);
+
+        res.status(200).json({ narrative: narrativeSummary, message: "집중 세션이 종료 및 분석되었습니다." });
+
+    } catch (error) {
+        console.error("v3.3.2 Focus End API Error:", error.message);
+        res.status(500).json({ message: "집중 세션 종료 중 서버 오류가 발생했습니다." });
     }
 });
 

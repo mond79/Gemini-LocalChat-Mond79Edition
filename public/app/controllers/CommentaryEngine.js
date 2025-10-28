@@ -42,9 +42,18 @@ export const CommentaryEngine = {
     stop() {
         if (this.intervalId) {
             clearInterval(this.intervalId);
-            this.intervalId = null; this.player = null; this.isOn = false;
+            this.intervalId = null;
+            this.player = null;
+            this.isOn = false;
             if(this.toggleButton) this.toggleButton.classList.remove('active');
+            
             document.getElementById('message-input').placeholder = "메시지를 입력하세요...";
+
+            // [✅ 최종 수정] 엔진이 멈출 때, 오버레이 자막을 확실하게 숨깁니다.
+            if (this.overlayEl) {
+                this.overlayEl.classList.remove('show');
+            }
+
             console.log("🎙️ Commentary Engine Stopped.");
         }
     },
@@ -231,7 +240,7 @@ export const CommentaryEngine = {
             const data = await response.json();
 
             if (data.audioContent) {
-                this.playDialogueAudio(data.audioContent, data.answerText);
+                this._speak(data.audioContent, data.answerText, true); // 'true'는 연속 대화 모드를 활성화하라는 신호
             } else {
                 this.showOverlayText(data.answerText || "죄송해요, 답변을 생성하는 데 실패했습니다.");
             }
@@ -240,25 +249,29 @@ export const CommentaryEngine = {
             this.showOverlayText("죄송해요, 답변을 생성하는 데 오류가 발생했습니다.");
         }
     },
-    // 사용자 질문 답변 재생 
-    playDialogueAudio(audioContent, text) {
+    // [최종] 모든 음성 출력을 책임지는 단 하나의 '마스터' 함수 (타이머 기능 탑재)
+    _speak(audioContent, text, isDialogue) {
+        // 1. 영상 제어 (기존과 동일)
         let wasPlaying = this.player && typeof this.player.getPlayerState === 'function' && this.player.getPlayerState() === 1;
-        if (wasPlaying) this.player.pauseVideo();
+        if (wasPlaying) {
+            this.player.pauseVideo();
+        }
         
         const audio = new Audio("data:audio/mp3;base64," + audioContent);
         audio.play();
-        this.showOverlayText(text);
+        
+        // 2. [핵심] 상황에 맞는 '사라지는 시간'을 결정합니다.
+        //    - 사용자와의 대화(isDialogue)이면 8초
+        //    - 자동 해설이면 5초
+        const duration = isDialogue ? 8000 : 5000;
+        this.showOverlayText(text, duration);
 
-        // [✅ v2.9 최종 수정] 루나의 말이 끝나면, 다음 행동을 결정합니다.
+        // 3. 음성 재생이 끝나면 다음 행동을 결정합니다 (기존과 동일)
         audio.onended = () => {
-            // 1. 일단 영상은 다시 재생시킵니다.
             if (wasPlaying && this.player && typeof this.player.playVideo === 'function') {
                 this.player.playVideo();
             }
-
-            // 2. 만약 '연속 대화 모드'가 켜져 있다면, '다시 듣기 시작' 신호를 보냅니다!
-            if (appState.settings.continuousConversationMode) {
-                console.log("🎙️ Continuous mode active. Requesting STT restart...");
+            if (isDialogue && appState.settings.continuousConversationMode) {
                 document.dispatchEvent(new CustomEvent('start-listening-again'));
             }
         };
@@ -271,7 +284,7 @@ export const CommentaryEngine = {
         };
     },
 
-    // [수정] 자동 해설 재생 함수 (이제 _speak을 사용하지 않고 직접 제어)
+    // [최종] '자동 해설' 함수는 이제 '마스터' 함수를 호출합니다.
     async playAutoCommentary(text, voiceName, pitch, speakingRate) {
         if (!this.isOn) return;
         try {
@@ -282,22 +295,29 @@ export const CommentaryEngine = {
             });
             const data = await response.json();
             if (data.audioContent) {
-                // 이 함수는 '자동' 해설이므로, 영상 제어가 필요 없습니다.
-                // 만약 제어가 필요하다면 playDialogueAudio를 호출하면 됩니다.
-                const audio = new Audio("data:audio/mp3;base64," + data.audioContent);
-                audio.play();
-                this.showOverlayText(text, 5000);
+                // isDialogue: false -> 자동 해설이므로 연속 대화 모드를 켜지 않습니다.
+                this._speak(data.audioContent, text, false);
             }
         } catch (error) {
             console.error('Auto Commentary Error:', error);
         }
     },
     
-    // _speak 함수는 playDialogueAudio로 통합되었으므로 삭제합니다.
+    // [최종] '사용자 질문 답변'도 이제 '마스터' 함수를 호출합니다. (이 함수는 ask 함수 안에서 호출됩니다)
+    playDialogueAudio(audioContent, text) {
+        // isDialogue: true -> 사용자와의 대화이므로 연속 대화 모드를 켤 수 있습니다.
+        this._speak(audioContent, text, true);
+    },
 
     showOverlayText(text, duration = 0) {
         if (!this.overlayEl) this.overlayEl = document.getElementById('ai-commentary-overlay');
         
+        // [핵심] 이전 타이머가 있다면 즉시 제거하여, 사라지는 도중에 새 메시지가 뜨는 것을 방지합니다.
+        if (this.overlayTimer) {
+            clearTimeout(this.overlayTimer);
+            this.overlayTimer = null;
+        }
+
         if (!text) {
             this.overlayEl.classList.remove('show');
             return;
@@ -307,15 +327,13 @@ export const CommentaryEngine = {
         this.overlayEl.textContent = text;
         this.overlayEl.classList.add('show');
         
-        // duration이 0보다 클 때만 자동으로 사라지도록 합니다.
+        // [핵심] duration이 0보다 클 때만 (즉, '자동 해설'이나 '질문 답변'일 때만) 자동으로 사라지도록 합니다.
         if (duration > 0) {
-            setTimeout(() => {
-                // 현재 텍스트가 동일할 때만 숨깁니다 (다른 자막이 이미 표시된 경우 방지)
-                if (this.overlayEl.textContent === text) {
-                    this.overlayEl.classList.remove('show');
-                }
+            this.overlayTimer = setTimeout(() => {
+                this.overlayEl.classList.remove('show');
             }, duration);
         }
+        // duration이 0이면 (즉, '실시간 자막' 모드이면) 자동으로 사라지지 않고 계속 남아있습니다.
     },
     
     updateEmotionBar() {

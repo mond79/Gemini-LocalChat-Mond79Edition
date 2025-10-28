@@ -206,6 +206,18 @@ function initializeDatabase() {
         )
     `);
 
+    // 집중 세션 기록 테이블
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS focus_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            start_time TEXT NOT NULL,
+            end_time TEXT,
+            duration_minutes INTEGER,
+            emotion_summary_json TEXT,
+            narrative_summary TEXT
+        )
+    `);
+
     console.log('[DB Manager] 테이블 초기화가 완료되었습니다.');
 }
 
@@ -762,6 +774,7 @@ function getLatestWeeklyGoal() {
     } catch (e) { return null; }
 }
 
+// 루나 감정 로그 저장 함수
 function logLunaEmotion(logData) {
     try {
         const stmt = db.prepare(`
@@ -780,6 +793,58 @@ function logLunaEmotion(logData) {
     } catch (error) {
         console.error('[DB Manager] 루나 감정 로그 저장 실패:', error);
         return false;
+    }
+}
+
+// 집중 세션 기록 함수
+function startFocusSession() {
+    try {
+        const stmt = db.prepare('INSERT INTO focus_sessions (start_time) VALUES (?)');
+        const info = stmt.run(new Date().toISOString());
+        console.log(`[DB Manager] 새로운 집중 세션 시작. ID: ${info.lastInsertRowid}`);
+        return info.lastInsertRowid; // 방금 생성된 세션의 고유 ID를 반환
+    } catch (error) {
+        console.error('[DB Manager] 집중 세션 시작 실패:', error);
+        return null;
+    }
+}
+
+function endFocusSession(sessionId, duration, emotionSummary, narrativeSummary) {
+    try {
+        const stmt = db.prepare(`
+            UPDATE focus_sessions
+            SET end_time = ?, duration_minutes = ?, emotion_summary_json = ?, narrative_summary = ?
+            WHERE id = ?
+        `);
+        stmt.run(
+            new Date().toISOString(),
+            duration,
+            JSON.stringify(emotionSummary),
+            narrativeSummary,
+            sessionId
+        );
+        console.log(`[DB Manager] 집중 세션 ID ${sessionId} 종료 및 분석 결과 저장 완료.`);
+        return true;
+    } catch (error) {
+        console.error(`[DB Manager] 집중 세션 ID ${sessionId} 종료 실패:`, error);
+        return false;
+    }
+}
+
+function getEmotionsForSession(focusSessionId) {
+    try {
+        // 1. focus_sessions 테이블에서 해당 세션의 시작 시간을 가져옵니다.
+        const session = db.prepare('SELECT start_time FROM focus_sessions WHERE id = ?').get(focusSessionId);
+        if (!session) return [];
+
+        // 2. luna_emotion_log 테이블에서, 해당 시작 시간 이후에 기록된 모든 감정 로그를 가져옵니다.
+        // (주의: 이 방식은 세션이 겹치지 않는다는 가정 하에 작동합니다)
+        const stmt = db.prepare('SELECT emotion, comment, timestamp_seconds FROM luna_emotion_log WHERE created_at >= ?');
+        const emotions = stmt.all(session.start_time);
+        return emotions;
+    } catch (error) {
+        console.error(`[DB Manager] 세션 ID ${focusSessionId}의 감정 로그 조회 실패:`, error);
+        return [];
     }
 }
 
@@ -822,5 +887,8 @@ module.exports = {
     getActivitiesByDate,
     saveDailyActivitySummary,
     getLatestWeeklyGoal,
-    logLunaEmotion  
+    logLunaEmotion,
+    startFocusSession,
+    endFocusSession,
+    getEmotionsForSession   
 };
