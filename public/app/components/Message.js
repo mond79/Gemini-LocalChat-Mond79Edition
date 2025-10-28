@@ -73,7 +73,8 @@ function renderMessageParts(parts, role, receivedAt) {
         // 2. 새로운 '스크립트 모드' 선택 버튼 그룹
         const scriptModeSelector = createDOMElement('div', { className: 'script-mode-selector' });
         const modes = { 
-            original: '원본', 
+            original: '해설', 
+            emotion: '감정 분석',
             translate: '실시간 번역', 
             summarize: '실시간 요약' 
         };

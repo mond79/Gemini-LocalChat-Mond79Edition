@@ -423,26 +423,29 @@ body.dark-mode .timeline-segment-button.active {
     background-color: var(--bg-active);
 }
 
-/* --- 🎙️ v2.6 AI Commentary & Emotion Bar --- */
 #ai-commentary-overlay {
-  position: fixed; /* 화면 전체에 고정 */
-  bottom: 80px; /* 입력창보다 약간 위에 */
+  /* 1. 위치 및 기본 구조 (대부분 동일) */
+  position: fixed;
   left: 50%;
+  bottom: 80px;
   transform: translateX(-50%);
   z-index: 100;
-  
-  background: rgba(20, 20, 20, 0.75);
-  color: #fff;
-  padding: 10px 16px;
-  border-radius: 12px;
-  font-size: 1rem;
-  font-weight: 500;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.6s ease, transform 0.4s ease;
   max-width: 80%;
   text-align: center;
 
-  opacity: 0;
-  transition: opacity 0.6s ease, transform 0.4s ease;
-  pointer-events: none; /* 클릭 방해하지 않도록 */
+  /* 2. [✅ v3.3.1 최종 수정] 디자인 개선 및 여러 줄 지원 */
+  background: rgba(20, 20, 20, 0.8);      /* 배경을 조금 더 진하게 */
+  color: #fff;
+  padding: 12px 18px;                   /* 패딩을 더 넉넉하게 */
+  border-radius: 12px;
+  font-size: 1.05rem;                   /* 폰트를 살짝 키움 */
+  font-weight: 500;
+  line-height: 1.6;                     /* 여러 줄 텍스트를 위한 줄 간격 */
+  box-shadow: 0 4px 15px rgba(0,0,0,0.3); /* 그림자 효과 추가 */
+  white-space: pre-wrap;                /* \n 줄바꿈을 지원하는 핵심 속성 */
 }
 
 #ai-commentary-overlay.show {
@@ -502,21 +505,23 @@ body.dark-mode .timeline-segment-button.active {
     background-color: var(--accent-color);
 }
 
-/* --- 🎙️ v3.4 Live Script Mode UI --- */
+/* --- 🎙️ v3.3.1+ (Emotion + Live Script) Integrated UI --- */
+
+/* '모드 제어판' 전체 컨테이너 */
 .commentary-mode-controls {
     display: flex;
     justify-content: center;
     align-items: center;
     gap: 10px;
-    margin: 10px auto 20px auto; /* 위아래 여백 추가 */
+    margin: 10px auto 20px auto;
     padding: 6px;
     background-color: var(--bg-sidebar);
-    border-radius: 25px; /* 둥근 알약 모양 */
+    border-radius: 25px;
     border: 1px solid var(--border-primary);
-    max-width: fit-content; /* 내용물에 맞게 너비 조절 */
+    max-width: fit-content;
 }
 
-/* '해설 ON/OFF' 버튼 스타일 */
+/* '해설 ON/OFF' 버튼 */
 .commentary-toggle-btn {
     padding: 8px 16px;
     border-radius: 20px;
@@ -533,7 +538,7 @@ body.dark-mode .timeline-segment-button.active {
     color: white;
 }
 
-/* '원본/번역/요약' 버튼 그룹 스타일 */
+/* '모드 선택' 버튼 그룹 */
 .script-mode-selector {
     display: flex;
     background-color: var(--bg-chat-area);
@@ -553,7 +558,6 @@ body.dark-mode .timeline-segment-button.active {
     transition: all 0.2s ease;
 }
 
-/* 현재 선택된 모드 버튼 스타일 */
 .script-mode-btn.active {
     background-color: var(--bg-active);
     color: var(--text-light);

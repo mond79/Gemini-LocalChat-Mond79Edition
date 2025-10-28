@@ -78,18 +78,17 @@ export const CommentaryEngine = {
         }
         const currentTime = this.player.getCurrentTime();
 
-        // --- 1단계: 감정 보간 및 Emotion Bar 업데이트 (모든 모드에서 항상 실행) ---
-        const currentSegmentForEmotion = this.chapters.flatMap(c => c.segments).find(s => currentTime >= s.start && currentTime < s.start + 30);
-        if (currentSegmentForEmotion) {
-            const targetProfile = getEmotionProfile(currentSegmentForEmotion.emotion_tag);
-            this.currentEmotionState = interpolateEmotionState(this.currentEmotionState, targetProfile, 0.1);
-            this.updateEmotionBar();
-        }
-
-        // --- 2단계: 현재 선택된 모드에 따라 다른 기능 실행 ---
+        // [핵심] 현재 선택된 모드에 따라 '오직 하나의 임무만' 수행합니다.
         if (this.scriptMode === 'original') {
-            // '원본' 모드에서는 '자동 해설'을 실행합니다.
+            // '해설' 모드일 때만 '자동 해설' 기능을 실행합니다.
+            const currentSegmentForEmotion = this.chapters.flatMap(c => c.segments).find(s => currentTime >= s.start && currentTime < s.start + 30);
             if (currentSegmentForEmotion) {
+                if (!this.isPlayingCommentary) { // 자동 해설 중이 아닐 때만 감정 바 업데이트
+                    const targetProfile = getEmotionProfile(currentSegmentForEmotion.emotion_tag);
+                    this.currentEmotionState = interpolateEmotionState(this.currentEmotionState, targetProfile, 0.1);
+                    this.updateEmotionBar();
+                }
+
                 const progress = (currentTime - currentSegmentForEmotion.start) / 30;
                 if (progress < 0.1 && !currentSegmentForEmotion.commentaryPlayed && !this.isPlayingCommentary) {
                     this.isPlayingCommentary = true;
@@ -100,14 +99,20 @@ export const CommentaryEngine = {
                 }
             }
         } else {
-            // '번역' 또는 '요약' 모드에서는 '실시간 자막 처리'를 실행합니다.
+            // '감정 분석', '번역', '요약' 모드일 때는 '실시간 자막 처리'만 실행합니다.
             const currentCaption = this.captions.find(c => currentTime >= c.start && currentTime <= c.end);
             if (currentCaption && currentCaption !== this.lastProcessedCaption) {
                 this.lastProcessedCaption = currentCaption;
-                this.processCaption(currentCaption);
+                // [핵심] API를 너무 자주 호출하지 않도록 제어합니다.
+                if (!this.isPlayingCommentary) {
+                    this.isPlayingCommentary = true;
+                    this.processCaption(currentCaption);
+                    // API 응답 시간 + 약간의 휴식을 고려하여 쿨다운 설정
+                    setTimeout(() => { this.isPlayingCommentary = false; }, 5000); 
+                }
             } else if (!currentCaption && this.lastProcessedCaption) {
                 this.lastProcessedCaption = null;
-                this.showOverlayText('', 100); // 자막 없는 구간에서 오버레이 즉시 숨김
+                this.showOverlayText('', 100);
             }
         }
     },
@@ -128,24 +133,59 @@ export const CommentaryEngine = {
     
     // [v3.4 신규] 감지된 자막 처리 함수
     async processCaption(caption) {
+        // '원본' 모드에서는 아무것도 하지 않고, 오버레이를 숨깁니다.
         if (this.scriptMode === 'original') {
-            // 원본 자막 모드에서는 아무것도 하지 않습니다. (유튜브 자체 자막을 보면 되므로)
-            // this.showOverlayText(caption.text); // 이 줄을 주석 처리하거나 삭제
+            this.showOverlayText('', 100);
             return;
         }
         try {
+            this.showOverlayText("루나가 생각 중...");
             const activeModelId = appState.sessions[appState.activeSessionId]?.model || 'gemini-flash-latest';
-            const res = await fetch("/api/live-transform", {
+            
+            let overlayText = '';
+
+            // [핵심] 현재 모드에 따라 필요한 API만 호출합니다.
+            if (this.scriptMode === 'emotion') {
+                // '감정 분석' 모드
+                const analyzeRes = await fetch("/api/analyze-emotion", {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: caption.text, modelId: activeModelId }),
+                });
+                if (!analyzeRes.ok) throw new Error('감정 분석 API 실패');
+                const emotionData = await analyzeRes.json();
+                overlayText = emotionData.comment; // 코멘트만 표시
+                
+            // 2. [핵심] 2단계에서 만든 '/api/log-emotion' API를 호출하여 DB에 기록합니다.
+            fetch('/api/log-emotion', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: caption.text, mode: this.scriptMode, modelId: activeModelId }),
+                body: JSON.stringify({
+                    videoId: this.videoId,
+                    timestamp: caption.start,
+                    emotion: emotionData.emotion,
+                    comment: emotionData.comment,
+                    sourceText: caption.text
+                })
             });
-            const data = await res.json();
-            if (data.transformedText) {
-                // duration 인자를 제거하여 자동으로 사라지지 않게 합니다.
-                this.showOverlayText(data.transformedText);
+            } else if (this.scriptMode === 'translate' || this.scriptMode === 'summarize') {
+                // '번역' 또는 '요약' 모드
+                const transformRes = await fetch("/api/live-transform", {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: caption.text, mode: this.scriptMode, modelId: activeModelId }),
+                });
+                if (!transformRes.ok) throw new Error('텍스트 변환 API 실패');
+                const transformData = await transformRes.json();
+                overlayText = transformData.transformedText;
             }
-        } catch (err) { console.error("Live Script Error:", err); }
+            
+            this.showOverlayText(overlayText);
+
+        } catch (err) {
+            console.error("Caption Processing Error:", err);
+            this.showOverlayText("[오류] 자막 처리에 실패했습니다.");
+        }
     },
 
     // 사용자 질문 처리 함수 
@@ -263,6 +303,7 @@ export const CommentaryEngine = {
             return;
         }
 
+        this.overlayEl.style.whiteSpace = 'pre-wrap';
         this.overlayEl.textContent = text;
         this.overlayEl.classList.add('show');
         

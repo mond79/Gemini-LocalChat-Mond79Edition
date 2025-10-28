@@ -3256,6 +3256,80 @@ app.get('/api/get-transcript/:videoId', async (req, res) => {
     }
 });
 
+// 🎭 [v3.3.1 신규] 실시간 감정 및 코멘트 분석 API
+app.post("/api/analyze-emotion", async (req, res) => {
+    try {
+        const { text, modelId } = req.body;
+        if (!text) {
+            return res.status(400).json({ message: "분석할 텍스트가 필요합니다." });
+        }
+
+        const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+        const model = genAI.getGenerativeModel({ model: modelId || "gemini-flash-latest" });
+
+        // [핵심] AI에게 '감정'과 '코멘트'를 JSON 형식으로 출력하도록 지시합니다.
+        const prompt = `
+당신은 텍스트에 담긴 감정을 분석하는 전문가입니다.
+주어진 문장을 읽고, 가장 지배적인 감정을 다음 중 하나로 분류하고, 그 감정에 어울리는 1인칭 시점의 짧은 코멘트(속마음)를 생성해주세요.
+
+[감정 분류]
+- funny (웃김, 재미)
+- tense (긴장, 불안)
+- excited (신남, 기대)
+- emotional (감동, 슬픔)
+- calm (차분, 평온)
+
+[출력 형식]
+반드시 다음 JSON 형식으로만 응답해야 합니다. 다른 텍스트는 절대 포함하지 마세요.
+{
+  "emotion": "분석된 감정",
+  "comment": "생성된 코멘트"
+}
+
+[분석할 문장]
+"${text}"
+`;
+
+        const result = await model.generateContent(prompt);
+        const responseText = result.response.text();
+        
+        // AI가 보낸 텍스트에서 JSON 부분만 안전하게 추출합니다.
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+            throw new Error("AI 응답에서 유효한 JSON을 찾을 수 없습니다.");
+        }
+        
+        const emotionData = JSON.parse(jsonMatch[0]);
+        res.json(emotionData);
+
+    } catch (error) {
+        console.error("v3.3.1 Analyze Emotion API Error:", error.message);
+        res.status(500).json({ message: "감정 분석 중 오류가 발생했습니다." });
+    }
+});
+
+// 💾 [v3.3.1 신규] 루나의 감정 로그를 DB에 기록하는 API
+app.post('/api/log-emotion', (req, res) => {
+    try {
+        const logData = req.body;
+        if (!logData || !logData.emotion || !logData.comment) {
+            return res.status(400).json({ message: "필수 데이터가 누락되었습니다." });
+        }
+        
+        // db-manager에 있는 함수를 호출하여 DB에 기록합니다.
+        const success = dbManager.logLunaEmotion(logData);
+        
+        if (success) {
+            res.status(200).json({ message: "루나의 감정이 성공적으로 기록되었습니다." });
+        } else {
+            throw new Error("DB 저장 실패");
+        }
+    } catch (error) {
+        console.error("v3.3.1 Log Emotion API Error:", error.message);
+        res.status(500).json({ message: "감정 기록 중 서버 오류가 발생했습니다." });
+    }
+});
+
 // --- 7. 서버 실행 (가장 마지막에!) ---
 async function startServer() {
     console.log('[Server Startup] 서버 시작 절차를 개시합니다...');

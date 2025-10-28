@@ -193,6 +193,19 @@ function initializeDatabase() {
         );
     `);
 
+    // 감정 로그 테이블
+     db.exec(`
+        CREATE TABLE IF NOT EXISTS luna_emotion_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            video_id TEXT,
+            timestamp_seconds REAL NOT NULL,
+            emotion TEXT NOT NULL,
+            comment TEXT,
+            source_text TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+
     console.log('[DB Manager] 테이블 초기화가 완료되었습니다.');
 }
 
@@ -749,6 +762,27 @@ function getLatestWeeklyGoal() {
     } catch (e) { return null; }
 }
 
+function logLunaEmotion(logData) {
+    try {
+        const stmt = db.prepare(`
+            INSERT INTO luna_emotion_log (video_id, timestamp_seconds, emotion, comment, source_text)
+            VALUES (@videoId, @timestamp, @emotion, @comment, @sourceText)
+        `);
+        stmt.run({
+            videoId: logData.videoId || null,
+            timestamp: logData.timestamp,
+            emotion: logData.emotion,
+            comment: logData.comment,
+            sourceText: logData.sourceText
+        });
+        console.log(`[DB Manager] 루나 감정 로그 저장 완료: ${logData.emotion}`);
+        return true;
+    } catch (error) {
+        console.error('[DB Manager] 루나 감정 로그 저장 실패:', error);
+        return false;
+    }
+}
+
 module.exports = {
     initializeDatabase,
     getChatHistory,
@@ -787,5 +821,6 @@ module.exports = {
     finishActivityLog,
     getActivitiesByDate,
     saveDailyActivitySummary,
-    getLatestWeeklyGoal  
+    getLatestWeeklyGoal,
+    logLunaEmotion  
 };
