@@ -29,6 +29,7 @@
     "express": "^4.19.2",
     "googleapis": "^162.0.0",
     "mammoth": "^1.11.0",
+    "multer": "^2.0.2",
     "node-cron": "^4.2.1",
     "pdf-parse": "^1.1.1",
     "pptxgenjs": "^4.0.1",

@@ -8,6 +8,7 @@ from typing import List, Dict, Any
 import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.metrics.pairwise import cosine_similarity
+from contextlib import asynccontextmanager
 import lancedb
 import os
 import subprocess
@@ -18,10 +19,12 @@ import webvtt
 from io import StringIO
 import time
 import threading
+import json
+import csv
+import io
 
 # --- 2. 설정 및 모델/DB 로드 ---
 MODEL_NAME = 'all-MiniLM-L6-v2'
-app = FastAPI(title="Local Vector AI Server", version="4.0.0")
 
 # --- LanceDB 설정 ---
 db_path = "./lancedb" # 프로젝트 루트에 lancedb 폴더 생성
@@ -29,7 +32,6 @@ db = lancedb.connect(db_path)
 table = None # 테이블 객체를 저장할 전역 변수
 
 # 서버 시작 시 실행되는 이벤트 핸들러
-@app.on_event("startup")
 async def startup_event():
     global model, table
     
@@ -67,6 +69,13 @@ async def startup_event():
         else:
             print("ERROR: 모델 로드 실패로 LanceDB 테이블을 생성할 수 없습니다.")
 
+# --- [2. 새로운 lifespan 핸들러를 추가합니다] ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("📦 [Lifespan] 서버 시작 프로세스를 시작합니다...")
+    await startup_event()  # 위에서 만든 초기화 함수를 호출합니다.
+    yield
+    print("🧹 [Lifespan] 서버 종료 프로세스를 시작합니다...")
 
 # --- 3. API 데이터 형식 정의 ---
 class EmbeddingRequest(BaseModel):
@@ -132,6 +141,16 @@ class MediaDownloadRequest(BaseModel):
 class MediaDownloadResponse(BaseModel):
     message: str
     file_path: str
+
+class FileContent(BaseModel):
+    filename: str
+    extension: str
+    content: str    
+
+# -----------------------------
+# 2. FastAPI 인스턴스 생성
+# -----------------------------    
+app = FastAPI(title="Local AI Server", version="5.1.0", lifespan=lifespan)    
 
 # --- 4. API 엔드포인트 생성 ---
 @app.post("/add", response_model=AddMemoryResponse)
@@ -408,7 +427,7 @@ async def rebuild_db(request: dict):
 class MediaDownloadRequest(BaseModel):
     url: str
     format: str = "mp4"  # 'mp4' 또는 'mp3'
-    output_path: str = "downloads" # 다운로드 경로 (기본값: 'downloads')
+    output_path: str = "public/downloads" # 다운로드 경로 (기본값: 'downloads')
 
 class MediaDownloadResponse(BaseModel):
     message: str
@@ -546,6 +565,89 @@ def start_cleanup_scheduler(path="public/downloads", max_age_hours=24, interval_
             time.sleep(interval_minutes * 60)
 
     threading.Thread(target=loop, daemon=True).start()
+
+# [새로운 기능] 확장형 파일 리더 엔진 
+@app.post("/read-file")
+def read_file(file: FileContent):
+    ext = file.extension.lower()
+    name = file.filename
+    text = file.content
+
+    try:
+        # 코드 / 일반 텍스트 파일
+        if ext in ["py", "js", "txt", "md"]:
+            max_len = 12000  # 12KB까지만 보여줌
+            truncated_text = text[:max_len]
+            if len(text) > max_len:
+                truncated_text += "\n\n...(이하 생략: 전체 파일 길이 {}자)".format(len(text))
+            return {
+                "filename": name,
+                "type": "code",
+                "extension": ext,
+                "text": truncated_text
+            }
+
+        # JSON 파일
+        elif ext == "json":
+            try:
+                parsed = json.loads(text)
+                # JSON 객체를 다시 문자열로 예쁘게 만듭니다 (들여쓰기 적용).
+                preview_text = json.dumps(parsed, indent=2, ensure_ascii=False)
+                return {
+                    "filename": name,
+                    "type": "json",
+                    "keys": list(parsed.keys()) if isinstance(parsed, dict) else None,
+                    "text": preview_text[:4000] # AI에게는 예쁘게 정리된 텍스트의 일부만 전달
+                }
+            except Exception:
+                raise HTTPException(status_code=400, detail="JSON 파싱 실패 — 잘못된 형식입니다.")
+
+        # Jupyter Notebook (.ipynb)
+        elif ext == "ipynb":
+            try:
+                data = json.loads(text)
+                cells = data.get("cells", [])
+                code_cells = [c for c in cells if c.get("cell_type") == "code"]
+                
+                # 모든 코드 셀 내용을 하나의 파이썬 스크립트처럼 합칩니다.
+                full_code = "\n\n# --- 다음 셀 ---\n\n".join(["".join(c.get("source", [])) for c in code_cells])
+
+                return {
+                    "filename": name,
+                    "type": "notebook",
+                    "code_cells_count": len(code_cells),
+                    "text": f"# 주피터 노트북 '{name}'의 코드 내용입니다.\n\n{full_code[:4000]}" # AI가 이해하기 쉽도록 설명 추가
+                }
+            except Exception:
+                raise HTTPException(status_code=400, detail="Jupyter Notebook 파싱 실패 — 잘못된 ipynb 파일입니다.")
+
+        # CSV 파일
+        elif ext == "csv":
+            reader = csv.reader(io.StringIO(text))
+            rows = list(reader)
+            header = rows[0] if rows else []
+            sample_rows = rows[1:6] # 헤더 제외 5줄
+
+            # AI가 이해하기 쉬운 마크다운 테이블 형식으로 변환합니다.
+            csv_text_preview = f"### CSV 파일 '{name}' 분석\n\n"
+            csv_text_preview += f"**총 {len(rows)}개의 행**이 있으며, 헤더는 다음과 같습니다:\n- " + ", ".join(header) + "\n\n"
+            csv_text_preview += "**데이터 샘플 (상위 5개):**\n"
+            csv_text_preview += "| " + " | ".join(header) + " |\n"
+            csv_text_preview += "| " + " | ".join(["---"] * len(header)) + " |\n"
+            for row in sample_rows:
+                csv_text_preview += "| " + " | ".join(row) + " |\n"
+
+            return {
+                "filename": name,
+                "type": "csv",
+                "text": csv_text_preview
+            }
+
+        else:
+            raise HTTPException(status_code=415, detail=f"지원하지 않는 파일 형식: {ext}")
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"파일 처리 중 오류 발생: {str(e)}")
 
 # --- 5. 서버 실행 ---
 if __name__ == "__main__":

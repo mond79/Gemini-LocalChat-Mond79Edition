@@ -23,6 +23,15 @@ const os = require('os');
 const dbManager = require('./database/db-manager');
 const vectorDBManager = require('./database/vector-db-manager');
 const videoMemoryCache = new Map();
+const multer = require('multer');
+
+// 'uploads/' 폴더가 없으면 자동으로 생성합니다.
+const uploadDir = 'uploads';
+if (!fsSync.existsSync(uploadDir)) {
+    fsSync.mkdirSync(uploadDir);
+}
+const upload = multer({ dest: uploadDir });
+// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
 function sanitizeTextForTTS(text) {
     if (!text) return '';
@@ -535,7 +544,7 @@ async function downloadMediaFromUrl({ url, format = "mp4" }) {
   }
 }
 
-// ▼▼▼ 다운로드 총괄 API 엔드포인트 ▼▼▼
+// 다운로드 총괄 API 엔드포인트 
 app.post(["/api/download-media", "/download-media"], async (req, res) => {
   const { url, format } = req.body || {};
   if (!url) return res.status(400).json({ error: "URL이 필요합니다." });
@@ -569,6 +578,44 @@ app.post(["/api/download-media", "/download-media"], async (req, res) => {
       .status(500)
       .json({ message: "미디어 다운로드 처리 중 오류 발생", error: detail });
   }
+});
+
+// 모든 파일의 내용을 읽어 파이썬으로 보내는 API 
+app.post("/api/read-file", upload.single("file"), async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: "파일이 업로드되지 않았습니다." });
+    }
+
+    const filePath = req.file.path;
+    const fileName = req.file.originalname;
+    const ext = path.extname(fileName).replace(".", "").toLowerCase();
+
+    console.log(`[File Reader] 파일 수신: ${fileName} (임시 경로: ${filePath})`);
+
+    try {
+        // 파일을 텍스트로 읽습니다. (UTF-8 인코딩)
+        const content = await fs.readFile(filePath, "utf8");
+
+        // 파이썬 서버의 /read-file 엔드포인트로 전달합니다.
+        console.log(`[File Reader] 파이썬 서버로 파일 내용 전달 중... (확장자: ${ext})`);
+        const pyResponse = await axios.post("http://localhost:8001/read-file", {
+            filename: fileName,
+            extension: ext,
+            content: content,
+        });
+
+        // 파이썬 서버의 응답을 프론트엔드로 그대로 전달합니다.
+        res.json(pyResponse.data);
+
+    } catch (error) {
+        const detail = error.response?.data?.detail || error.message;
+        console.error("[File Reader] 파일 처리 오류:", detail);
+        res.status(500).json({ error: `파일을 처리하는 중 오류가 발생했습니다: ${detail}` });
+    } finally {
+        // 작업이 끝나면 임시 파일을 항상 삭제합니다.
+        await fs.unlink(filePath);
+        console.log(`[File Reader] 임시 파일 삭제: ${filePath}`);
+    }
 });
 
 // [도구 7 & 8] 사용자 프로필 저장/불러오기
