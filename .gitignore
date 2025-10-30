@@ -14,6 +14,11 @@ assistant.db-journal
 assistant.db-wal
 /lancedb/
 
+files.db
+memories.db
+reports.db
+tasks.db
+
 # User authentication tokens
 token.json
 

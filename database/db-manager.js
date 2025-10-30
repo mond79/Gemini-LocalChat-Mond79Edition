@@ -1,10 +1,21 @@
 const path = require('path');
 const Database = require('better-sqlite3');
+const fs = require('fs');
 
-// --- 데이터베이스 연결 ---
-const dbPath = path.join(__dirname, '..', 'assistant.db');
-const db = new Database(dbPath);
-console.log('[DB Manager] assistant.db에 성공적으로 연결되었습니다.');
+const dbDir = path.join(__dirname, '..', 'database');
+if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+}
+
+const dbConnections = {
+    main: new Database(path.join(__dirname, '..', 'assistant.db')), // 기존 assistant.db
+    memories: new Database(path.join(dbDir, 'memories.db')),
+    files: new Database(path.join(dbDir, 'files.db')),
+    reports: new Database(path.join(dbDir, 'reports.db')),
+    tasks: new Database(path.join(dbDir, 'tasks.db')),
+};
+console.log("[DB Manager v2.0] Notion-Style 데이터베이스 멀티-커넥션 완료.");
+const db = dbConnections.main; // <<< 기존 코드와의 호환성을 위해 'db' 변수는 main을 가리키도록 유지
 
 // --- 헬퍼 함수 ---
 // 테이블에 특정 컬럼이 없으면 추가하는 범용 함수
@@ -978,6 +989,54 @@ function getLatestWeeklyReport() {
     }
 }
 
+// --- Notion-Style DB Functions ---
+
+function saveNewMemory(memoryData) {
+    const db = dbConnections.memories;
+    const stmt = db.prepare('INSERT INTO memories (user_message, luna_response, emotion_tag) VALUES (@user_message, @luna_response, @emotion_tag)');
+    return stmt.run(memoryData).lastInsertRowid;
+}
+
+function saveNewFile(fileData) {
+    const db = dbConnections.files;
+    const stmt = db.prepare('INSERT INTO files (filename, extension, file_path, summary, keywords) VALUES (@filename, @extension, @file_path, @summary, @keywords)');
+    return stmt.run(fileData).lastInsertRowid;
+}
+
+// ... (saveNewReport, saveNewTask 함수도 유사하게 추가) ...
+
+/**
+ * @description 루나가 생성한 리포트를 reports.db에 저장합니다.
+ * @param {object} reportData - { title, type, content_md, linked_file_id }
+ * @returns {number} 새로 생성된 리포트의 ID
+ */
+function saveNewReport(reportData) {
+    const db = dbConnections.reports;
+    const stmt = db.prepare(`
+        INSERT INTO reports (title, type, content_md, linked_file_id) 
+        VALUES (@title, @type, @content_md, @linked_file_id)
+    `);
+    const info = stmt.run(reportData);
+    console.log(`[DB Manager v2.0] 새로운 리포트 저장 완료 (ID: ${info.lastInsertRowid}) -> reports.db`);
+    return info.lastInsertRowid;
+}
+
+/**
+ * @description 새로운 작업을 tasks.db에 추가합니다.
+ * @param {object} taskData - { category, title, duration_minutes, status }
+ * @returns {number} 새로 생성된 작업의 ID
+ */
+function saveNewTask(taskData) {
+    const db = dbConnections.tasks;
+    const stmt = db.prepare(`
+        INSERT INTO tasks (category, title, duration_minutes, status, date)
+        VALUES (@category, @title, @duration_minutes, @status, date('now'))
+    `);
+    const info = stmt.run(taskData);
+    console.log(`[DB Manager v2.0] 새로운 작업 저장 완료 (ID: ${info.lastInsertRowid}) -> tasks.db`);
+    return info.lastInsertRowid;
+}
+
 module.exports = {
     initializeDatabase,
     getChatHistory,
@@ -1009,7 +1068,6 @@ module.exports = {
     saveDailyNarrative,
     getDailySummaries,
     saveWeeklyMetaInsight,     
-    
     getUserSetting,
     saveUserSetting,
     startActivityLog,
@@ -1023,5 +1081,9 @@ module.exports = {
     getEmotionsForSession,
     getWeeklyReportData,
     getWeekRange,
-    getLatestWeeklyReport   
+    getLatestWeeklyReport,
+    saveNewMemory,
+    saveNewFile,
+    saveNewReport,
+    saveNewTask,   
 };

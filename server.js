@@ -2308,12 +2308,31 @@ Analyze the user's request and call the most appropriate tool with the correct p
             finalReply = { type: 'text', text: deAnonymizedText };
         }
         
-        // ★★★ 핵심: 모든 일반 대화는 이 마지막 부분에서 기억/저장됩니다. ★★★
-        // 이미 conversationHistory에 push가 되어 있으므로, DB에 새로 들어온 메시지만 저장합니다.
-        const newUserMessageToSave = conversationHistory[conversationHistory.length - 1];
-        dbManager.saveChatMessage(chatId, newUserMessageToSave.role, newUserMessageToSave.parts);
-        dbManager.saveChatMessage(chatId, 'model', [finalReply]); // finalReply는 parts 배열이 아니므로 배열로 감싸줍니다.
-        console.log(`[History] 새로운 메시지를 DB의 ${chatId} 대화에 저장했습니다.`);
+        // 1. [단기 기억] 현재 대화방의 히스토리를 기존 chat_history 테이블에 저장합니다.
+        const newUserMessageToSave = conversationHistory.length > 1 ? conversationHistory[conversationHistory.length - 1] : null;
+        if (newUserMessageToSave) {
+            dbManager.saveChatMessage(chatId, newUserMessageToSave.role, newUserMessageToSave.parts);
+        }
+        if (finalReply) {
+            dbManager.saveChatMessage(chatId, 'model', [finalReply]);
+        }
+        console.log(`[History] 단기 기억을 DB의 ${chatId} 대화에 저장했습니다.`);
+
+        // 2. [장기/관계형 기억] memories.db에 핵심 내용을 기록합니다.
+        try {
+            const userMessageText = newUserMessageToSave?.parts.find(p => p.type === 'text')?.text || '(파일 또는 이미지)';
+            const lunaResponseText = finalReply?.type === 'text' ? finalReply.text : `(${finalReply?.type || '응답 없음'})`;
+
+            const newMemoryId = dbManager.saveNewMemory({
+                user_message: userMessageText,
+                luna_response: lunaResponseText,
+                emotion_tag: 'neutral' // 임시
+            });
+            console.log(`[DB Manager v2.0] 새로운 장기 기억 저장 완료 (ID: ${newMemoryId}) -> memories.db`);
+
+        } catch (memError) {
+            console.error('[DB Manager v2.0] Notion-Style 기억 저장 중 오류:', memError.message);
+        }
         
         // 여기에 AI 학습 로직을 다시 추가할 수 있습니다 (선택 사항)
         try {
