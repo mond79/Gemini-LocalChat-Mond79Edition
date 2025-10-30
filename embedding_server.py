@@ -16,6 +16,8 @@ import re
 from urllib.parse import urlparse, parse_qs
 import webvtt
 from io import StringIO
+import time
+import threading
 
 # --- 2. 설정 및 모델/DB 로드 ---
 MODEL_NAME = 'all-MiniLM-L6-v2'
@@ -121,6 +123,15 @@ class SearchResultItem(BaseModel):
 
 class SearchSegmentsResponse(BaseModel):
     results: List[SearchResultItem]
+
+class MediaDownloadRequest(BaseModel):
+    url: str
+    format: str = "mp4"
+    output_path: str
+
+class MediaDownloadResponse(BaseModel):
+    message: str
+    file_path: str
 
 # --- 4. API 엔드포인트 생성 ---
 @app.post("/add", response_model=AddMemoryResponse)
@@ -391,7 +402,153 @@ async def rebuild_db(request: dict):
     except Exception as e:
         print(f"ERROR: VectorDB 재구축 중 오류: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    
+# 만능 미디어 다운로더 
+
+class MediaDownloadRequest(BaseModel):
+    url: str
+    format: str = "mp4"  # 'mp4' 또는 'mp3'
+    output_path: str = "downloads" # 다운로드 경로 (기본값: 'downloads')
+
+class MediaDownloadResponse(BaseModel):
+    message: str
+    file_path: str
+
+@app.post("/download-media", response_model=MediaDownloadResponse)
+def download_media(request: MediaDownloadRequest):
+    video_url = request.url.strip()
+    output_format = request.format.lower()
+    output_path = request.output_path
+
+    print(f"INFO: (yt-dlp) 다운로드 요청 수신 — URL: {video_url}, 포맷: {output_format}")
+    os.makedirs(output_path, exist_ok=True)
+
+    output_template = os.path.join(output_path, "%(id)s.%(ext)s")
+
+    command = [
+        "yt-dlp",
+        "--restrict-filenames",
+        "--no-overwrites",
+        "--prefer-ffmpeg",
+        "-o", output_template,
+    ]
+
+    if output_format == "mp3":
+        command.extend([
+            "-x",
+            "--audio-format", "mp3",
+            "--audio-quality", "0",
+            "--prefer-ffmpeg",
+            # ▼▼▼ [핵심 수정] "ffmpeg:" 접두사를 제거하여 올바른 문법으로 수정합니다. ▼▼▼
+            "--postprocessor-args", "-af loudnorm,aresample=44100,aformat=channel_layouts=stereo"
+        ])
+    else:
+        command.extend([
+            "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "--merge-output-format", "mp4"
+        ])
+
+    command.append(video_url)
+
+    try:
+        print(f"INFO: (yt-dlp) 실행 명령어: {' '.join(command)}")
+        # ✅ stderr도 포함해서 모두 UTF-8로 시도, 실패 시 CP949로 fallback
+        try:
+            result = subprocess.run(
+                command, check=True, capture_output=True, text=True, encoding="utf-8"
+            )
+            combined_output = (result.stdout or "") + (result.stderr or "")
+        except UnicodeDecodeError:
+            result = subprocess.run(
+                command, check=True, capture_output=True, text=True, encoding="cp949"
+            )
+            combined_output = (result.stdout or "") + (result.stderr or "")
+
+        # ✅ stdout+stderr 전체를 라인 단위로 분리
+        output_lines = combined_output.splitlines()
+        file_path = None
+
+        for line in output_lines:
+            if any(key in line for key in ["Destination:", "Downloading", "Merging formats into"]):
+                match = re.search(r'([A-Za-z]:[\\/].*?\.(mp4|mp3|m4a|webm))', line)
+                if match:
+                    file_path = match.group(1)
+                    break
+
+        if not file_path:
+            # 마지막 수단으로 디렉터리 직접 스캔
+            possible = [
+                os.path.join(output_path, f)
+                for f in os.listdir(output_path)
+                if f.endswith(f".{output_format}")
+            ]
+            if possible:
+                file_path = max(possible, key=os.path.getctime)
+            else:
+                raise FileNotFoundError("다운로드된 파일의 최종 경로를 로그에서 찾을 수 없습니다.")
+
+        file_path = os.path.abspath(file_path)
+        print(f"✅ (yt-dlp) 다운로드 완료: {file_path}")
+
+        return {
+            "message": f"{output_format.upper()} 다운로드 성공",
+            "file_path": file_path.replace("\\", "/"),
+        }
+
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=f"yt-dlp 오류: {e.stderr}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"서버 내부 오류: {str(e)}")
+
+# ==========================================================
+# 🎯 오래된 다운로드 파일 자동 정리 스케줄러
+# ==========================================================
+
+def cleanup_downloads(path="public/downloads", max_age_hours=24):
+    """
+    지정된 폴더 내에서 오래된 미디어 파일(mp3/mp4/webm/m4a)을 자동으로 삭제합니다.
+    DB, 로그, 기억 데이터는 절대 건드리지 않습니다.
+    """
+    now = time.time()
+    deleted_files = 0
+
+    # 폴더가 존재하지 않으면 그냥 패스
+    if not os.path.exists(path):
+        return
+
+    for f in os.listdir(path):
+        fp = os.path.join(path, f)
+        # 파일만 대상으로
+        if os.path.isfile(fp):
+            age = (now - os.path.getmtime(fp)) / 3600
+            # 미디어 파일만 삭제
+            if age > max_age_hours and fp.lower().endswith((".mp3", ".mp4", ".webm", ".m4a")):
+                try:
+                    os.remove(fp)
+                    deleted_files += 1
+                    print(f"[Cleanup] 오래된 파일 삭제: {f}")
+                except Exception as e:
+                    print(f"[Cleanup] 파일 삭제 실패 ({f}): {e}")
+
+    if deleted_files > 0:
+        print(f"[Cleanup] {deleted_files}개의 오래된 미디어 파일이 정리되었습니다.")
+    else:
+        print("[Cleanup] 삭제할 오래된 파일이 없습니다.")
+
+def start_cleanup_scheduler(path="public/downloads", max_age_hours=24, interval_minutes=60):
+    """
+    FastAPI 서버 실행 시 백그라운드로 자동 실행되는 주기적 정리 루프.
+    """
+    def loop():
+        print(f"[Cleanup Scheduler] 백그라운드 파일 정리 스케줄러 시작됨. (주기: {interval_minutes}분마다 검사)")
+        while True:
+            cleanup_downloads(path, max_age_hours)
+            time.sleep(interval_minutes * 60)
+
+    threading.Thread(target=loop, daemon=True).start()
 
 # --- 5. 서버 실행 ---
 if __name__ == "__main__":
+    # 서버 실행 전 정리 루프 시작
+    start_cleanup_scheduler(path="public/downloads", max_age_hours=24, interval_minutes=60)
     uvicorn.run(app, host="0.0.0.0", port=8001)

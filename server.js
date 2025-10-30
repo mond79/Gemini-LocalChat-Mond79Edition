@@ -55,6 +55,19 @@ const oAuth2Client = new google.auth.OAuth2(
 const TOKEN_PATH = path.join(__dirname, 'token.json'); // 토큰을 저장할 파일 경로
 
 const app = express();
+
+// ▼▼▼ [최종 수정] 모든 미들웨어는 API 경로(라우터)보다 반드시 먼저 선언되어야 합니다. ▼▼▼
+
+// 1. CORS (외부 요청 허용)
+app.use(cors());
+// 2. JSON 통역기 (req.body를 읽을 수 있게 함)
+app.use(express.json({ limit: '100mb' }));
+
+// 3. 정적 파일 경로 설정
+app.use(express.static(path.join(__dirname, 'public')));
+app.use('/downloads', express.static(path.join(process.cwd(), 'public', 'downloads')));
+
+
 const pendingConfirmations = {};
 const port = 3333;
 //const chatHistoriesDir = path.join(__dirname, 'chat_histories');
@@ -71,29 +84,6 @@ const SENSITIVE_KEYWORDS = process.env.SENSITIVE_KEYWORDS
 
 const anonymizationMap = new Map(); // 원본 <-> 코드명 변환 기록을 저장할 맵
 // --- 데이터 익명화 설정 끝 ---
-
-// 프롬프트 변조' 헬퍼 함수
-
-//function anonymizeText(text) {
-    //if (!ANONYMIZATION_ENABLED) return text;
-
-    //let anonymizedText = text;
-    //for (const keyword of SENSITIVE_KEYWORDS) {
-        // text 안에 키워드가 포함되어 있는지 확인
-        //if (anonymizedText.includes(keyword)) {
-            //let codeName = anonymizationMap.get(keyword);
-            // 이 키워드에 대한 코드명이 아직 없으면 새로 생성
-            //if (!codeName) {
-                //codeName = `[KEYWORD_${anonymizationMap.size + 1}]`;
-                //anonymizationMap.set(keyword, codeName); // 원본 -> 코드명 저장
-                //anonymizationMap.set(codeName, keyword); // 코드명 -> 원본 저장 (복원을 위해)
-            //}
-            // 텍스트의 모든 키워드를 코드명으로 교체
-            //anonymizedText = anonymizedText.replace(new RegExp(keyword, 'g'), codeName);
-        //}
-    //}
-    //return anonymizedText;
-//}
 
 // deAnonymizeText 함수가 '해독표'를 인자로 받도록 수정합니다.
 function deAnonymizeText(text, currentAnonymizationMap) {
@@ -432,7 +422,6 @@ async function youtubeVideoAssistant({ query, summarize = true, display = true }
         return titledChapters;
     }
 
-    // --- (이하 나머지 로직은 몬드님의 기존 코드와 거의 동일합니다) ---
     try {
         const urlToProcess = (query.startsWith('http')) ? query : query;
         const transcriptData = await getYoutubeTranscript({ url: urlToProcess });
@@ -524,6 +513,63 @@ async function youtubeVideoAssistant({ query, summarize = true, display = true }
         return `죄송합니다, 영상 타임라인을 생성하는 중 오류가 발생했습니다: ${detail}`;
     }
 }
+
+// 만능 미디어 집사
+async function downloadMediaFromUrl({ url, format = "mp4" }) {
+  console.log(`[Media Butler Tool] AI가 미디어 다운로드 요청. Node.js API를 호출합니다.`);
+  try {
+    const response = await axios.post("http://localhost:3333/api/download-media", {
+      url,
+      format,
+    });
+
+    if (response.data && response.data.public_url) {
+      return `다운로드를 완료했습니다. 아래 링크에서 확인하세요:\n[다운로드 링크](${response.data.public_url})`;
+    } else {
+      throw new Error(response.data.error || "API로부터 유효한 응답을 받지 못했습니다.");
+    }
+  } catch (error) {
+    const detail = error.response?.data?.error || error.message;
+    console.error(`[Media Butler Tool] 실패: ${detail}`);
+    return `죄송합니다. 미디어를 다운로드하는 중 오류가 발생했습니다: ${detail}`;
+  }
+}
+
+// ▼▼▼ 다운로드 총괄 API 엔드포인트 ▼▼▼
+app.post(["/api/download-media", "/download-media"], async (req, res) => {
+  const { url, format } = req.body || {};
+  if (!url) return res.status(400).json({ error: "URL이 필요합니다." });
+
+  console.log(`[Node API] /download-media 요청 수신: ${url}, 형식: ${format}`);
+  const downloadFolderPath = path.join(process.cwd(), "public", "downloads");
+
+  try {
+    const pyResponse = await axios.post("http://localhost:8001/download-media", {
+      url,
+      format: format || "mp4",
+      output_path: downloadFolderPath,
+    });
+
+    const { file_path } = pyResponse.data;
+    if (!file_path) throw new Error("파이썬 서버가 파일 경로를 반환하지 않았습니다.");
+
+    const fileName = path.basename(file_path);
+    const publicUrl = `/downloads/${fileName}`;
+
+    console.log(`[Node API] 다운로드 성공. 공개 URL: ${publicUrl}`);
+    res.json({
+      message: "다운로드 성공",
+      public_url: publicUrl,
+    });
+  } catch (error) {
+    const detail =
+      error.response?.data?.detail || error.response?.data?.error || error.message;
+    console.error("[Node API] 파이썬 서버 통신 실패:", detail);
+    res
+      .status(500)
+      .json({ message: "미디어 다운로드 처리 중 오류 발생", error: detail });
+  }
+});
 
 // [도구 7 & 8] 사용자 프로필 저장/불러오기
 /**
@@ -1767,14 +1813,12 @@ const tools = {
   addInterest,
   listInterests,
   writeFile,
+  downloadMediaFromUrl,
   // createSummaryAndSave는 조금 특별해서 여기엔 등록하지 않습니다.
   // analyzeMusic, // <-- 이 기능은 파이썬 서버를 켜야 하므로 일단 주석 처리
 };
 
-// --- 5. 미들웨어 설정 ---
-app.use(cors());
-app.use(express.json({ limit: '100mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+
 
 // --- 6. API 엔드포인트(경로) 정의 ---
 
@@ -2038,6 +2082,7 @@ app.post('/api/chat', async (req, res) => {
                   { name: 'getYoutubeTranscript', description: '사용자가 "youtube.com" 또는 "youtu.be" 링크를 제공하며 영상의 내용을 요약하거나 분석해달라고 요청할 때 사용합니다.', parameters: { type: 'object', properties: { url: { type: 'string', description: '스크립트를 추출할 정확한 유튜브 영상 주소 (URL)' } }, required: ['url'] } },
                   { name: 'displayYoutubeVideo', description: "사용자가 특정 유튜브 영상 ID나 URL을 주면서 **'요약 없이 영상만 즉시 보여달라'**고 요청했을 때 사용하는 가장 빠른 방법입니다.", parameters: { type: 'object', properties: { videoId: { type: 'string' } }, required: ['videoId'] } },
                   { name: "youtubeVideoAssistant", description: "사용자가 유튜브 영상에 대해 '요약'과 '재생'을 **모두 또는 하나라도** 요청했을 때 사용하는 **가장 우선적인 만능 도구**입니다. 영상 URL이나 검색어를 모두 처리할 수 있습니다.", parameters: { type: "object", properties: { query: { type: "string", description: "사용자가 찾고자 하는 영상의 URL 또는 검색어." }, summarize: { type: "boolean", description: "사용자가 영상 '요약'을 원하는지 여부. (기본값: true)" }, display: { type: "boolean", description: "사용자가 영상을 채팅창에서 '재생'하기를 원하는지 여부. (기본값: true)" } }, required: ["query"] } },
+                  { name: "downloadMediaFromUrl", description: "사용자가 특정 URL(유튜브, 트위터, 인스타그램 등)의 영상이나 음원을 '저장', '다운로드', '추출'해달라고 요청했을 때 사용하는 만능 도구입니다. 'mp3'나 'mp4' 같은 포맷을 지정할 수 있습니다.", parameters: { type: "object", properties: { url: { type: "string", description: "다운로드할 미디어의 전체 URL." }, format: { type: "string", enum: ["mp4", "mp3"], description: "저장할 파일의 포맷. 영상은 'mp4', 음원만 추출할 경우 'mp3'를 사용합니다. 지정하지 않으면 'mp4'가 기본값입니다." } }, required: ["url"] } },
                   { name: "recallUserProfile", description: "사용자가 '나에 대해 아는 것 말해줘', '내 프로필 요약해줘', '내가 누구야?' 등 AI가 자신에 대해 기억하는 모든 정보를 물어볼 때 사용합니다.", parameters: { type: 'object', properties: {} }},
                   { name: "rememberIdentity", description: "사용자가 자신의 이름이나 직업/역할에 대해 알려주며 기억해달라고 할 때 사용합니다. 예: '내 이름은 몬드야', '내 직업은 개발자야'", parameters: {  type: 'object',  properties: { key: { type: 'string', enum: ['name', 'role'], description: "기억할 정보의 종류. '이름'이면 'name', '직업'이나 '역할'이면 'role'입니다." }, value: { type: 'string', description: "기억할 실제 내용." } }, required: ["key", "value"] } },
                   { name: "rememberPreference", description: "사용자가 무언가를 '좋아한다' 또는 '싫어한다'고 명확하게 표현할 때 사용합니다. 예: '난 민트초코를 좋아해', '나는 오이를 싫어해'", parameters: {  type: 'object',  properties: { type: { type: 'string', enum: ['likes', 'dislikes'], description: "'좋아하면' 'likes', '싫어하면' 'dislikes'입니다." }, item: { type: 'string', description: "좋아하거나 싫어하는 대상." } }, required: ["type", "item"] }},
