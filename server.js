@@ -54,6 +54,19 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const REDIRECT_URI = 'http://localhost:3333/oauth2callback';
 
+// --- 3. [핵심] 전역 인스턴스 등록 ---
+// GEMINI_API_KEY가 정의된 이후에 genAI 인스턴스를 생성해야 합니다.
+if (!GEMINI_API_KEY) {
+    console.error("CRITICAL ERROR: GEMINI_API_KEY가 .env 파일에 설정되지 않았습니다. 서버를 시작할 수 없습니다.");
+    process.exit(1); // API 키가 없으면 서버를 강제 종료
+}
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+
+// global 객체에 핵심 인스턴스들을 등록합니다.
+global.genAI = genAI;
+global.dbManager = dbManager;
+// global.tools는 나중에 tools 객체가 정의된 후에 등록해야 합니다.
+
 // [✅ 새로운 부분] Google OAuth2 클라이언트 생성
 const oAuth2Client = new google.auth.OAuth2(
     GOOGLE_CLIENT_ID,
@@ -615,6 +628,48 @@ app.post("/api/read-file", upload.single("file"), async (req, res) => {
         // 작업이 끝나면 임시 파일을 항상 삭제합니다.
         await fs.unlink(filePath);
         console.log(`[File Reader] 임시 파일 삭제: ${filePath}`);
+    }
+});
+
+// 루나 Notion-style Dashboard용 API 
+
+// 🧠 Memories (대화 + 감정 기록)
+app.get("/api/memories", (req, res) => {
+    try {
+        res.json(dbManager.getAllMemoriesForDashboard());
+    } catch (err) {
+        console.error("[API /api/memories] 오류:", err.message);
+        res.status(500).json({ error: "기억 데이터를 가져오는 중 오류가 발생했습니다." });
+    }
+});
+
+// 📂 Files (파일 / 코드 / 데이터 리소스)
+app.get("/api/files", (req, res) => {
+    try {
+        res.json(dbManager.getAllFilesForDashboard());
+    } catch (err) {
+        console.error("[API /api/files] 오류:", err.message);
+        res.status(500).json({ error: "파일 데이터를 가져오는 중 오류가 발생했습니다." });
+    }
+});
+
+// 🧾 Reports (루나의 리포트 요약)
+app.get("/api/reports", (req, res) => {
+    try {
+        res.json(dbManager.getAllReportsForDashboard());
+    } catch (err) {
+        console.error("[API /api/reports] 오류:", err.message);
+        res.status(500).json({ error: "리포트 데이터를 가져오는 중 오류가 발생했습니다." });
+    }
+});
+
+// 📅 Tasks (Pomodoro / 루틴 / 학습 기록)
+app.get("/api/tasks", (req, res) => {
+    try {
+        res.json(dbManager.getAllTasksForDashboard());
+    } catch (err) {
+        console.error("[API /api/tasks] 오류:", err.message);
+        res.status(500).json({ error: "작업 데이터를 가져오는 중 오류가 발생했습니다." });
     }
 });
 
@@ -1465,33 +1520,55 @@ async function writeFile({ filename, content }) {
  * @description 현재까지의 대화 내용을 요약하고, 그 결과를 사용자의 바탕화면에 텍스트 파일로 저장합니다.
  * @param {string} topic - 요약할 대화의 주제이자, 파일 이름의 기반이 됩니다.
  */
-async function createSummaryAndSave({ topic }, conversationHistory, genAI) {
+async function createSummaryAndSave({ topic }) {
     console.log(`[Workflow] '요약 후 저장' 워크플로우 시작. 주제: ${topic}`);
-    
+
+    const conversationHistory = global.conversationHistory || [];
+    const genAI = global.genAI;
+    const dbManager = global.dbManager;
+    const { writeFile } = global.tools || {};
+
+    if (!genAI) throw new Error("⚠️ global.genAI가 초기화되지 않았습니다.");
+    if (!writeFile) throw new Error("⚠️ writeFile 도구가 등록되지 않았습니다.");
+
     try {
-        // 1. [요약] 현재까지의 대화 기록을 텍스트로 변환합니다.
+        // 1️⃣ 대화 내용을 텍스트로 변환
         const conversationText = conversationHistory
             .map(m => `${m.role}: ${m.parts.map(p => p.text || '').join(' ')}`)
             .join('\n');
 
-        const prompt = `다음 대화 내용을 "${topic}"이라는 주제에 맞춰서, 중요한 핵심만 간추려 상세한 회의록 형식으로 요약해줘. 대화 내용:\n\n${conversationText}`;
+        const prompt = `다음 대화 내용을 "${topic}"이라는 주제에 맞춰서, 중요한 핵심만 간추려 상세한 회의록 형식으로 요약해줘.\n\n${conversationText}`;
 
-        // 2. [AI 호출] 요약을 위해 AI에게 작업을 요청합니다.
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' }); // 요약은 빠른 모델 사용
+        // 2️⃣ Gemini 모델로 요약 생성
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
         const result = await model.generateContent(prompt);
         const summaryContent = result.response.text();
 
-        // 3. [파일 쓰기] 방금 만든 writeFile 도구를 호출합니다.
+        // 3️⃣ 파일로 저장
         const filename = `${topic.replace(/ /g, '_')}_${new Date().toISOString().split('T')[0]}.txt`;
-        const writeFileResult = await writeFile({ filename: filename, content: summaryContent });
+        await writeFile({ filename, content: summaryContent });
+        console.log(`[Workflow] 요약 파일 저장 완료 → ${filename}`);
 
-        return writeFileResult; // writeFile의 성공/실패 메시지를 그대로 반환합니다.
+        // 4️⃣ DB 저장
+        try {
+            await dbManager.saveNewReport({
+                title: `[요약] ${topic}`,
+                type: 'conversation_summary',
+                content_md: summaryContent,
+                linked_memory_id: null
+            });
+            console.log(`[Workflow] 요약 내용 DB 저장 완료 (reports.db)`);
+        } catch (reportErr) {
+            console.error("[DB Manager v2.1] 대화 요약 리포트 저장 실패:", reportErr.message);
+        }
 
+        return `[보고서 저장 완료] '${topic}' 요약이 파일 및 DB에 저장되었습니다.`;
     } catch (error) {
         console.error(`[Workflow] '요약 후 저장' 중 오류 발생:`, error);
-        return `워크플로우 처리 중 오류가 발생했습니다: ${error.message}`;
+        return `요약 처리 중 오류 발생: ${error.message}`;
     }
 }
+
 // ['자율적 연구원' 슈퍼 도구의 입구를 만듭니다.
 /**
  * @description 자율 연구원: 특정 주제에 대해 웹 검색, 정보 수집, 분석, 종합하여 최종 보고서를 생성하는 복합적인 작업을 수행합니다.
@@ -1507,7 +1584,7 @@ async function autonomousResearcher({ topic, output_format }, modelName) {
   try {
     // --- 2단계: 계획 수립  ---
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: modelName });
+    const model = genAI.getGenerativeModel({ model: modelName || 'gemini-flash-latest' });
 
     const planningPrompt = `
       You are a world-class research planner and investigator. Your goal is to create a step-by-step plan to write a comprehensive report on the topic: "${topic}".
@@ -1639,6 +1716,17 @@ async function autonomousResearcher({ topic, output_format }, modelName) {
         
         console.log(`[Autonomous Researcher] 8. Mission Complete! PPTX file generated.`);
         const finalMessage = `"[${topic}]"에 대한 조사를 바탕으로 발표 자료(PPT) 생성을 완료했습니다. 아래 링크에서 다운로드하세요:\n\n[다운로드 링크](http://localhost:3333${pptxDownloadUrl})`;
+        
+        // 생성된 PPT 구조(JSON)를 reports.db에 저장합니다.
+        try {
+            dbManager.saveNewReport({
+                title: `[PPT] ${topic}`,
+                type: 'ppt_structure',
+                content_md: `\`\`\`json\n${pptJsonString}\n\`\`\``, // JSON 내용을 마크다운 코드 블록으로 저장
+                linked_file_id: null
+            });
+        } catch (report_err) { console.error("[DB Manager v2.1] PPT 리포트 저장 실패:", report_err.message); }
+
         return finalMessage;
 
     } else {
@@ -1668,6 +1756,19 @@ async function autonomousResearcher({ topic, output_format }, modelName) {
         const finalReport = finalResult.response.text();
         
         console.log(`[Autonomous Researcher] 7. Mission Complete! Text report generated.`);
+
+        // [핵심 추가] 생성된 텍스트 보고서를 reports.db에 저장합니다.
+        try {
+            dbManager.saveNewReport({
+                title: `[보고서] ${topic}`,
+                type: 'autonomous_research',
+                content_md: finalReport,
+                linked_file_id: null
+            });
+        } catch (report_err) { 
+            console.error("[DB Manager v2.1] 자율 연구 리포트 저장 실패:", report_err.message); 
+        }
+
         return finalReport;
     }
 
@@ -1861,11 +1962,12 @@ const tools = {
   listInterests,
   writeFile,
   downloadMediaFromUrl,
+  createSummaryAndSave
   // createSummaryAndSave는 조금 특별해서 여기엔 등록하지 않습니다.
   // analyzeMusic, // <-- 이 기능은 파이썬 서버를 켜야 하므로 일단 주석 처리
 };
 
-
+global.tools = tools;
 
 // --- 6. API 엔드포인트(경로) 정의 ---
 
@@ -2002,6 +2104,8 @@ app.post('/api/chat', async (req, res) => {
                 console.log(`[History] ${chatId}에 대한 기존 대화가 없습니다. 새 대화를 시작합니다.`);
             }
         
+        global.conversationHistory = conversationHistory; // 여기에 추가 
+
         const newUserMessage = history.slice(-1)[0];
         if (newUserMessage) {
             conversationHistory.push(newUserMessage);
@@ -2233,6 +2337,7 @@ Analyze the user's request and call the most appropriate tool with the correct p
             const functionCall = functionCalls[0];
             const { name, args } = functionCall;
 
+            // 1️⃣ 즉시 응답 도구
             if (name === 'start_study_timer') {
                 console.log('[Study Loop] AI가 공부 타이머 시작 도구를 호출했습니다.');
                 const logId = dbManager.startActivityLog('study');
@@ -2244,10 +2349,27 @@ Analyze the user's request and call the most appropriate tool with the correct p
                 };
                 conversationHistory.push({ role: 'model', parts: [timerReply] });
                 dbManager.saveChatMessage(chatId, 'model', [timerReply]);
-                return res.json({ reply: timerReply, chatId: chatId, usage: { totalTokenCount: totalTokenCount } });
+                return res.json({ reply: timerReply, chatId, usage: { totalTokenCount } });
             }
 
-            if (tools[name]) {
+            // 2️⃣ 'createSummaryAndSave' 슈퍼 도구
+            else if (name === 'createSummaryAndSave') {
+                console.log("[API Handler] 'createSummaryAndSave' 특별 도구 호출 감지.");
+                const deAnonymizedArgs = {};
+                for (const key in args) {
+                    if (typeof args[key] === 'string') {
+                        deAnonymizedArgs[key] = deAnonymizeText(args[key], combinedMap);
+                    } else {
+                        deAnonymizedArgs[key] = args[key];
+                    }
+                }
+
+                const functionResult = await createSummaryAndSave(deAnonymizedArgs);
+                finalReply = { type: 'text', text: functionResult };
+            }
+
+            // 3️⃣ 일반 도구들
+            else if (tools[name]) {
                 const deAnonymizedArgs = {};
                 for (const key in args) {
                     if (typeof args[key] === 'string') {
@@ -2261,46 +2383,26 @@ Analyze the user's request and call the most appropriate tool with the correct p
                 let secondResult;
 
                 if (typeof functionResult === 'string' && functionResult.startsWith('[TIMELINE_DATA]:::')) {
-                    console.log('[API Handler] 타임라인 데이터 신호를 감지했습니다.');
                     const jsonData = functionResult.split(':::')[1];
-                    finalReply = { 
-                        type: 'youtube_timeline',
-                        data: JSON.parse(jsonData)
-                    };
+                    finalReply = { type: 'youtube_timeline', data: JSON.parse(jsonData) };
+                } else if (name === 'downloadMediaFromUrl' && functionResult.includes('다운로드를 완료했습니다')) {
+                    finalReply = { type: 'text', text: functionResult };
                 } else {
-                    try {
-                        const parsedResult = JSON.parse(functionResult);
-                        if (parsedResult && parsedResult.needsConfirmation) {
-                            pendingConfirmations[chatId] = parsedResult;
-                            const confirmationPrompt = `The user wants to execute the command(s) '${JSON.stringify(parsedResult.details)}'. Your task is to ask for confirmation...`;
-                            secondResult = await chat.sendMessage(confirmationPrompt);
-                        } else { 
-                            throw new Error("Not a confirmation request."); 
-                        }
-                    } catch (e) {
-                         if (name === 'convertNaturalDateToISO') {
-                            try {
-                                const calendarArgs = JSON.parse(functionResult);
-                                const chainedResult = await tools['getCalendarEvents'](calendarArgs);
-                                const functionResponse = { name: 'getCalendarEvents', response: { name: 'getCalendarEvents', content: chainedResult } };
-                                secondResult = await chat.sendMessage([{ functionResponse: functionResponse }]);
-                            } catch (chainError) {
-                                const functionResponse = { name: name, response: { name: name, content: functionResult } };
-                                secondResult = await chat.sendMessage([{ functionResponse: functionResponse }]);
-                            }
-                        } else {
-                            const functionResponse = { name: name, response: { name: name, content: functionResult } };
-                            secondResult = await chat.sendMessage([{ functionResponse: functionResponse }]);
-                        }
-                    }
-
+                    const functionResponse = {
+                        name: name,
+                        response: { name: name, content: functionResult }
+                    };
+                    const secondResult = await chat.sendMessage([{ functionResponse }]);
                     if (secondResult) {
                         const deAnonymizedText = deAnonymizeText(secondResult.response.text(), combinedMap);
                         finalReply = { type: 'text', text: deAnonymizedText };
                         totalTokenCount += secondResult.response.usageMetadata?.totalTokenCount || 0;
                     }
                 }
-            } else {
+            }
+
+            // 4️⃣ 도구가 없을 때
+            else {
                 finalReply = { type: 'text', text: `오류: 알 수 없는 도구 '${name}'를 호출했습니다.` };
             }
         } else {

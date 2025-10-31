@@ -22,6 +22,7 @@ import threading
 import json
 import csv
 import io
+import sqlite3
 
 # --- 2. 설정 및 모델/DB 로드 ---
 MODEL_NAME = 'all-MiniLM-L6-v2'
@@ -572,79 +573,81 @@ def read_file(file: FileContent):
     ext = file.extension.lower()
     name = file.filename
     text = file.content
+    
+    # DB 저장을 위한 변수 초기화
+    final_text_for_ai = ""
+    result_dict = {}
 
     try:
-        # 코드 / 일반 텍스트 파일
         if ext in ["py", "js", "txt", "md"]:
-            max_len = 12000  # 12KB까지만 보여줌
-            truncated_text = text[:max_len]
-            if len(text) > max_len:
-                truncated_text += "\n\n...(이하 생략: 전체 파일 길이 {}자)".format(len(text))
-            return {
-                "filename": name,
-                "type": "code",
-                "extension": ext,
-                "text": truncated_text
-            }
+            final_text_for_ai = text
+            result_dict = { "filename": name, "type": "code", "text": final_text_for_ai }
 
-        # JSON 파일
         elif ext == "json":
             try:
                 parsed = json.loads(text)
-                # JSON 객체를 다시 문자열로 예쁘게 만듭니다 (들여쓰기 적용).
-                preview_text = json.dumps(parsed, indent=2, ensure_ascii=False)
-                return {
-                    "filename": name,
-                    "type": "json",
+                final_text_for_ai = json.dumps(parsed, indent=2, ensure_ascii=False)
+                result_dict = {
+                    "filename": name, "type": "json",
                     "keys": list(parsed.keys()) if isinstance(parsed, dict) else None,
-                    "text": preview_text[:4000] # AI에게는 예쁘게 정리된 텍스트의 일부만 전달
+                    "text": final_text_for_ai[:4000]
                 }
             except Exception:
-                raise HTTPException(status_code=400, detail="JSON 파싱 실패 — 잘못된 형식입니다.")
+                raise HTTPException(status_code=400, detail="JSON 파싱 실패")
 
-        # Jupyter Notebook (.ipynb)
         elif ext == "ipynb":
             try:
                 data = json.loads(text)
                 cells = data.get("cells", [])
                 code_cells = [c for c in cells if c.get("cell_type") == "code"]
-                
-                # 모든 코드 셀 내용을 하나의 파이썬 스크립트처럼 합칩니다.
-                full_code = "\n\n# --- 다음 셀 ---\n\n".join(["".join(c.get("source", [])) for c in code_cells])
-
-                return {
-                    "filename": name,
-                    "type": "notebook",
+                full_code = "\n".join(["".join(c.get("source", [])) for c in code_cells])
+                final_text_for_ai = f"# 주피터 노트북 '{name}'의 코드 내용\n\n{full_code}"
+                result_dict = {
+                    "filename": name, "type": "notebook",
                     "code_cells_count": len(code_cells),
-                    "text": f"# 주피터 노트북 '{name}'의 코드 내용입니다.\n\n{full_code[:4000]}" # AI가 이해하기 쉽도록 설명 추가
+                    "text": final_text_for_ai[:4000]
                 }
             except Exception:
-                raise HTTPException(status_code=400, detail="Jupyter Notebook 파싱 실패 — 잘못된 ipynb 파일입니다.")
+                raise HTTPException(status_code=400, detail="Jupyter Notebook 파싱 실패")
 
-        # CSV 파일
         elif ext == "csv":
             reader = csv.reader(io.StringIO(text))
             rows = list(reader)
             header = rows[0] if rows else []
-            sample_rows = rows[1:6] # 헤더 제외 5줄
-
-            # AI가 이해하기 쉬운 마크다운 테이블 형식으로 변환합니다.
-            csv_text_preview = f"### CSV 파일 '{name}' 분석\n\n"
-            csv_text_preview += f"**총 {len(rows)}개의 행**이 있으며, 헤더는 다음과 같습니다:\n- " + ", ".join(header) + "\n\n"
-            csv_text_preview += "**데이터 샘플 (상위 5개):**\n"
-            csv_text_preview += "| " + " | ".join(header) + " |\n"
-            csv_text_preview += "| " + " | ".join(["---"] * len(header)) + " |\n"
+            sample_rows = rows[1:6]
+            
+            csv_preview = "| " + " | ".join(header) + " |\n"
+            csv_preview += "| " + " | ".join(["---"] * len(header)) + " |\n"
             for row in sample_rows:
-                csv_text_preview += "| " + " | ".join(row) + " |\n"
-
-            return {
-                "filename": name,
-                "type": "csv",
-                "text": csv_text_preview
-            }
+                csv_preview += "| " + " | ".join(row) + " |\n"
+            final_text_for_ai = f"### CSV 파일 '{name}' 분석\n**총 {len(rows)}개 행**, 헤더: {', '.join(header)}\n\n**샘플 데이터:**\n{csv_preview}"
+            
+            result_dict = { "filename": name, "type": "csv", "text": final_text_for_ai }
 
         else:
             raise HTTPException(status_code=415, detail=f"지원하지 않는 파일 형식: {ext}")
+
+        # ▼▼▼ [핵심 추가] 모든 분석이 끝난 후, 최종적으로 DB에 저장합니다. ▼▼▼
+        if final_text_for_ai:
+            try:
+                # 데이터베이스 파일의 정확한 경로를 지정합니다.
+                db_path = os.path.join(os.path.dirname(__file__), 'database', 'files.db')
+                conn = sqlite3.connect(db_path)
+                cursor = conn.cursor()
+                # summary 컬럼에 AI에게 전달할 텍스트의 요약본(최대 500자)을 저장합니다.
+                cursor.execute(
+                    "INSERT INTO files (filename, extension, summary) VALUES (?, ?, ?)",
+                    (name, ext, final_text_for_ai[:500])
+                )
+                conn.commit()
+                conn.close()
+                print(f"INFO: (DB) 파일 분석 결과를 files.db에 저장했습니다: {name}")
+            except Exception as db_e:
+                # DB 저장에 실패하더라도, 기능 자체는 작동하도록 오류만 출력합니다.
+                print(f"ERROR: (DB) files.db 저장 실패: {db_e}")
+        # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+
+        return result_dict # 최종적으로 프론트엔드에 분석 결과를 반환합니다.
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"파일 처리 중 오류 발생: {str(e)}")

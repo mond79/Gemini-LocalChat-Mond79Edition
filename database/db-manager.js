@@ -1036,6 +1036,51 @@ function saveNewTask(taskData) {
     console.log(`[DB Manager v2.0] 새로운 작업 저장 완료 (ID: ${info.lastInsertRowid}) -> tasks.db`);
     return info.lastInsertRowid;
 }
+// --- Notion-Style Dashboard 조회 함수들 ---
+
+function getAllMemoriesForDashboard() {
+    try {
+        const db = dbConnections.memories;
+        const stmt = db.prepare('SELECT * FROM memories ORDER BY timestamp DESC LIMIT 200');
+        return stmt.all();
+    } catch (error) {
+        console.error("[DB Manager] 대시보드용 'memories' 데이터 조회 실패:", error.message);
+        return []; // 오류 발생 시 빈 배열 반환
+    }
+}
+
+function getAllFilesForDashboard() {
+    try {
+        const db = dbConnections.files;
+        const stmt = db.prepare('SELECT * FROM files ORDER BY uploaded_at DESC');
+        return stmt.all();
+    } catch (error) {
+        console.error("[DB Manager] 대시보드용 'files' 데이터 조회 실패:", error.message);
+        return [];
+    }
+}
+
+function getAllReportsForDashboard() {
+    try {
+        const db = dbConnections.reports;
+        const stmt = db.prepare('SELECT * FROM reports ORDER BY created_at DESC');
+        return stmt.all();
+    } catch (error) {
+        console.error("[DB Manager] 대시보드용 'reports' 데이터 조회 실패:", error.message);
+        return [];
+    }
+}
+
+function getAllTasksForDashboard() {
+    try {
+        const db = dbConnections.tasks;
+        const stmt = db.prepare('SELECT * FROM tasks ORDER BY date DESC');
+        return stmt.all();
+    } catch (error) {
+        console.error("[DB Manager] 대시보드용 'tasks' 데이터 조회 실패:", error.message);
+        return [];
+    }
+}
 
 module.exports = {
     initializeDatabase,
@@ -1082,8 +1127,14 @@ module.exports = {
     getWeeklyReportData,
     getWeekRange,
     getLatestWeeklyReport,
+    // --- Notion-Style DB 제어 함수들 ---
     saveNewMemory,
     saveNewFile,
     saveNewReport,
     saveNewTask,   
+    // --- Notion-Style Dashboard 조회 함수들 ---
+    getAllMemoriesForDashboard,
+    getAllFilesForDashboard,
+    getAllReportsForDashboard,
+    getAllTasksForDashboard,
 };
