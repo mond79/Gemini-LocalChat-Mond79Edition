@@ -6,6 +6,7 @@ import * as CodeSummary from './CodeSummary.js';
 import * as PdfSummary from './PdfSummary.js';
 import { StudyLoop } from '../controllers/StudyLoop.js';
 import { CommentaryEngine } from '../controllers/CommentaryEngine.js'; 
+import { renderSecureContent } from '../utils/highlighter.js';
 
 function formatCompletionTime(timestamp) {
     const now = new Date();
@@ -49,9 +50,12 @@ function renderMessageParts(parts, role, receivedAt) {
                         rawText = "OK. 구글 캘린더를 연결하겠습니다. 먼저 접근 권한을 부여해야 합니다. 아래 링크를 방문하여 권한을 부여해주세요:\n\n" + authLink;
                     }
 
-                    const rawHtml = window.marked.parse(rawText);
-                    let sanitizedHtml = window.DOMPurify.sanitize(rawHtml);
-                    partContent.innerHTML = CodeBlock.enhance(sanitizedHtml);
+                    //const rawHtml = window.marked.parse(rawText);
+                    //let sanitizedHtml = window.DOMPurify.sanitize(rawHtml);
+                    //partContent.innerHTML = CodeBlock.enhance(sanitizedHtml);
+
+                    // [핵심 수정] 복잡한 로직 대신, 우리가 만든 만능 함수를 호출!
+                    partContent.innerHTML = renderSecureContent(rawText);
                 }
                 break;
 

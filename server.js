@@ -3740,6 +3740,19 @@ app.get("/api/latest-weekly-report", (req, res) => {
         res.status(500).json({ ok: false, error: "보고서를 가져오는 중 오류 발생" });
     }
 });
+
+// 지능형 성장 기록(일기장) 조회 API 
+app.post("/api/query-reflections", (req, res) => {
+    try {
+        // 프론트엔드에서 보낸 필터 조건(req.body)을 dbManager의 새로운 함수에 전달합니다.
+        const results = dbManager.queryReflections(req.body);
+        res.json(results);
+    } catch (err) {
+        console.error("[API /api/query-reflections] 오류:", err.message);
+        res.status(500).json({ error: "성장 기록을 조회하는 중 오류가 발생했습니다." });
+    }
+});
+
 // --- 7. 서버 실행 (가장 마지막에!) ---
 async function startServer() {
     console.log('[Server Startup] 서버 시작 절차를 개시합니다...');

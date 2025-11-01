@@ -44,8 +44,15 @@
         }
         @keyframes spin { to { transform: rotate(360deg); } }
         body.loaded #app-loading-overlay { opacity: 0; visibility: hidden; }
-        .container { opacity: 0; transition: opacity 0.5s ease-in; }
-        body.loaded .container { opacity: 1; }
+        .container { opacity: 0; }
+        body.loaded .container { opacity: 1; transition: opacity 0.5s ease-in; }
+
+        /* 브라우저에게 차트와 타임라인이 독립적인 렌더링 계층임을 알려, */
+        /* 타임라인 변경 시 차트가 다시 그려지는 현상을 방지합니다. */
+        #emotion-chart-container, 
+        #reflection-timeline-container {
+            will-change: transform;
+}
 
         /* --- [커스텀 CSS] --- */
         .file-task-btn {
@@ -282,11 +289,25 @@
                                 <!-- 구분선 -->
                                 <hr style="border: 1px solid var(--border-color); margin: 30px 0;">
 
-                                <!-- 4. '하루 요약' 타임라인이 표시될 공간 -->
+                                <!-- 4. [업그레이드] 지능형 성장 기록 탐색기 -->
                                 <div class="settings-section">
-                                    <h2 class="section-title">🌱 루나의 성장 기록</h2>
-                                    <div id="reflection-timeline-container" style="margin-top: 15px;">
-                                        <p>일기를 불러오는 중...</p>
+                                    <h2 class="section-title">🌱 루나의 성장 기록 탐색기</h2>
+                                    <p class="section-description">루나의 모든 성찰 기록(일기)을 키워드나 기간으로 검색하고 필터링합니다.</p>
+                                    
+                                    <!-- ▼▼▼ [새로운 기능] 검색 및 필터 컨트롤 UI ▼▼▼ -->
+                                    <div id="diary-controls" style="display: flex; gap: 10px; margin: 20px 0;">
+                                        <input type="text" id="diary-search-query" placeholder="일기 내용에서 키워드 검색..." style="flex-grow: 1; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-color); background-color: var(--background-color); color: var(--text-color);">
+                                        <select id="diary-time-range" style="padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-color); background-color: var(--background-color); color: var(--text-color);">
+                                            <option value="전체">전체 기간</option>
+                                            <option value="지난 7일">지난 7일</option>
+                                            <option value="지난 30일">지난 30일</option>
+                                        </select>
+                                        <button id="diary-search-btn" type="button" style="padding: 8px 20px; border: none; border-radius: 6px; background-color: var(--primary-color); color: white; cursor: pointer;">검색</button>
+                                    </div>
+                                    
+                                    <!-- ▼▼▼ 검색 결과가 표시될 공간 (기존 컨테이너 재활용) ▼▼▼ -->
+                                    <div id="reflection-timeline-container" style="margin-top: 15px; height: 500px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px; padding: 15px;">
+                                        <p>검색 버튼을 눌러 루나의 성장 기록을 조회하세요.</p>
                                     </div>
                                 </div>
                         

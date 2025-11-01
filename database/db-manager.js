@@ -1082,6 +1082,55 @@ function getAllTasksForDashboard() {
     }
 }
 
+/**
+ * @description '루나의 일기장(성장 기록)'을 위한 지능형 쿼리 함수
+ * @param {object} filters - { query, time_range, limit, sort_by }
+ * @returns {Array} ai_reflections 테이블에서 필터링된 결과
+ */
+function queryReflections({ query, time_range, limit = 50, sort_by = 'latest' }) {
+    try {
+        // ▼▼▼ [핵심] 이제 assistant.db의 ai_reflections 테이블을 사용합니다. ▼▼▼
+        const db = dbConnections.main; 
+        const params = [];
+        let whereClauses = [];
+
+        // 1. 키워드 검색: learned, improvements, insight_text 컬럼 모두에서 검색
+        if (query && query.trim() !== '') {
+            whereClauses.push("(learned LIKE ? OR improvements LIKE ? OR insight_text LIKE ?)");
+            params.push(`%${query}%`, `%${query}%`, `%${query}%`);
+        }
+        
+        // 2. 기간 필터: entry_date 컬럼을 기준으로 필터링
+        if (time_range) {
+            if (time_range === '지난 7일') {
+                whereClauses.push("entry_date >= date('now', '-7 days')");
+            } else if (time_range === '지난 30일') {
+                whereClauses.push("entry_date >= date('now', '-30 days')");
+            }
+            // "전체 기간"은 아무 조건도 추가하지 않습니다.
+        }
+
+        const order = sort_by === 'oldest' ? 'ASC' : 'DESC';
+        const whereSQL = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+        
+        const sql = `
+            SELECT entry_date, learned, improvements, insight_text, emotional_weight
+            FROM ai_reflections
+            ${whereSQL}
+            ORDER BY entry_date ${order}
+            LIMIT ?
+        `;
+        params.push(limit);
+
+        const stmt = db.prepare(sql);
+        return stmt.all(params);
+
+    } catch (error) {
+        console.error("[DB Manager] 성찰 기록(ai_reflections) 쿼리 실패:", error.message);
+        return []; // 오류 발생 시 안전하게 빈 배열 반환
+    }
+}
+
 module.exports = {
     initializeDatabase,
     getChatHistory,
@@ -1127,6 +1176,7 @@ module.exports = {
     getWeeklyReportData,
     getWeekRange,
     getLatestWeeklyReport,
+    queryReflections,
     // --- Notion-Style DB 제어 함수들 ---
     saveNewMemory,
     saveNewFile,

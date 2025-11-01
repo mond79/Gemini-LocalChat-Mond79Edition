@@ -36,16 +36,9 @@ function handleTabClick(e) {
     elements.tabContents.forEach(content => content.classList.remove('active'));
     document.getElementById(targetTabId).classList.add('active');
     
-    // 탭을 클릭했을 때, 해당 탭에 맞는 모듈의 render 함수를 호출합니다.
-    if (targetTabId === 'tab-usage') {
-        UsageReporter.render();
-    } else if (targetTabId === 'tab-data') {
-        MemoryVisualizer.render();
-    } else if (targetTabId === 'tab-memory-browser') {
-        MemoryBrowser.render();
-    } else if (targetTabId === 'tab-luna-diary') {
-        LunaDiary.render();
-    }
+    // "어떤 탭을 보여줄지"에 대한 결정만 하고,
+    // "어떻게 보여줄지"에 대한 구체적인 명령은 showTabContent 함수에게 위임합니다.
+    SettingsController.showTabContent(targetTabId);
 }
 
 function startResetCountdown() {
@@ -106,9 +99,15 @@ export const SettingsController = {
             usageDetails: document.querySelector('.usage-details'),
             focusMinutesInput: document.getElementById('focus-minutes-input')
         };
+        // --- 1. 각 모듈의 '초기화(init)'를 여기서 단 한번만 실행합니다. ---
         ApiSettings.init(appState, elements, this);
         UsageReporter.init(appState, elements, this);
         GeneralSettings.init(appState, elements, this);
+        
+        // [핵심 수정 1] LunaDiary의 무거운 초기화 작업을 여기서 딱 한 번만 실행합니다.
+        LunaDiary.init(); 
+
+        // --- 2. 이벤트 리스너를 연결합니다. ---
         elements.tabList.addEventListener('click', handleTabClick);
         if (elements.usageFilterGroup) {
             elements.usageFilterGroup.addEventListener('click', handleFilterClick);
@@ -119,19 +118,9 @@ export const SettingsController = {
         if (elements.usageDetails) {
              elements.usageDetails.addEventListener('click', handleFilterClick);
         }
+        
         checkAndResetDailyUsage();
         startResetCountdown();
-
-        // 페이지가 처음 로드될 때 활성화된 탭을 확인하고,
-        // 만약 '데이터 관리' 탭이라면 차트를 바로 그리도록 합니다.
-        const activeTab = document.querySelector('#settings-tabs-list .tab-btn.active')?.dataset.tab;
-        if (activeTab === 'tab-data') {
-            MemoryVisualizer.render();
-        } else if (activeTab === 'tab-memory-browser') { 
-            MemoryBrowser.render();
-        } else if (activeTab === 'tab-luna-diary') { 
-                LunaDiary.render();
-        }
 
         // ✨ '집중 시간' 입력창 이벤트 리스너
         if (elements.focusMinutesInput) {
@@ -154,15 +143,34 @@ export const SettingsController = {
             });
         }
 
+        // --- 3. 페이지 첫 로드 시, 활성화된 탭의 콘텐츠를 표시합니다. ---
+        const activeTab = document.querySelector('#settings-tabs-list .tab-btn.active')?.dataset.tab;
+        this.showTabContent(activeTab);
+
         isInitialized = true;
-        console.log('SettingsController Initialized.');
+        console.log('SettingsController 최종 초기화 완료.');
     },
+
+    // [새로운 기능] '무엇을 그릴지' 결정하는 지휘자 함수
+    showTabContent(tabId) {
+        if (tabId === 'tab-usage') {
+            UsageReporter.render();
+        } else if (tabId === 'tab-data') {
+            MemoryVisualizer.render();
+        } else if (tabId === 'tab-memory-browser') {
+            MemoryBrowser.render();
+        } else if (tabId === 'tab-luna-diary') {
+            // 'show'는 타임라인만 새로고침하는 가벼운 역할을 합니다.
+            LunaDiary.show(); 
+        }
+    },
+    
     async render() {
         if (!isInitialized) this.init();
+        
         ApiSettings.render();
         GeneralSettings.render();
 
-        // ✨ 2. 서버에서 현재 '집중 시간' 설정을 가져와 UI에 표시
         if (elements.focusMinutesInput) {
             try {
                 const response = await fetch('/api/settings/focus-minutes');
@@ -170,21 +178,11 @@ export const SettingsController = {
                 elements.focusMinutesInput.value = data.minutes;
             } catch (error) {
                 console.error('집중 시간 로드 실패:', error);
-                elements.focusMinutesInput.value = 25; // 로드 실패 시 기본값 25로 설정
+                elements.focusMinutesInput.value = 25;
             }
         }
         
-        // 현재 활성화된 탭을 찾아서, 그 탭에 맞는 모듈의 render 함수를 호출합니다.
-        const activeTab = document.querySelector('#settings-tabs-list .tab-btn.active')?.dataset.tab;
-        
-        if (activeTab === 'tab-usage') {
-            UsageReporter.render();
-        } else if (activeTab === 'tab-data') {
-            MemoryVisualizer.render();
-        } else if (activeTab === 'tab-memory-browser') {
-            MemoryBrowser.render();
-        } else if (activeTab === 'tab-luna-diary') {
-            LunaDiary.render();
-        }
+        // [수정] render 함수는 더 이상 탭 콘텐츠를 직접 그리지 않습니다.
+        // 따라서, 기존에 있던 if/else if 블록은 여기서 삭제합니다.
     }
 };
