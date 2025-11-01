@@ -298,21 +298,50 @@ export const LunaDiary = {
 
         if (!queryInput || !timeRangeSelect || !timelineContainer) return;
         
-        // 1. [추가] 현재 스크롤 위치를 기억합니다.
-        const scrollPosition = window.scrollY;
+        timelineContainer.innerHTML = `<p style="color:var(--text-color-secondary);">모든 기록을 검색하는 중...</p>`;
 
-        timelineContainer.innerHTML = `<p style="color:var(--text-color-secondary);">성장 기록을 검색하는 중...</p>`;
+        const query = queryInput.value.toLowerCase(); // 검색어는 소문자로 바꿔서 비교
+        const timeRange = timeRangeSelect.value;
 
-        const reflections = await fetchReflections({
-            query: queryInput.value,
-            time_range: timeRangeSelect.value
+        const [reflections, allSummaries] = await Promise.all([
+            fetchReflections({
+                query: query,
+                time_range: timeRange
+            }),
+            fetchDailySummaries()
+        ]);
+
+        // --- [핵심 수정] ---
+        // 가져온 '모든 하루 일기(allSummaries)'를 여기서 직접 필터링합니다.
+        const filteredSummaries = allSummaries.filter(summary => {
+            // 1. 키워드 필터링: 일기 내용(narrative)에 검색어가 포함되어 있는지 확인
+            const matchesQuery = !query || (summary.narrative && summary.narrative.toLowerCase().includes(query));
+
+            // 2. 기간 필터링
+            if (!matchesQuery) return false; // 키워드가 안 맞으면 바로 탈락
+
+            if (timeRange === '전체') {
+                return true; // '전체' 기간이면 무조건 통과
+            }
+            
+            const entryDate = new Date(summary.entry_date);
+            const today = new Date();
+            let startDate = new Date();
+
+            if (timeRange === '지난 7일') {
+                startDate.setDate(today.getDate() - 7);
+            } else if (timeRange === '지난 30일') {
+                startDate.setDate(today.getDate() - 30);
+            }
+            // entryDate가 startDate 이후인지 확인 (시간은 무시하고 날짜만 비교)
+            return entryDate.setHours(0,0,0,0) >= startDate.setHours(0,0,0,0);
         });
         
-        // renderReflectionTimeline 함수는 우리가 마지막에 수정한 DocumentFragment 버전 그대로 사용하시면 됩니다.
-        renderReflectionTimeline(timelineContainer, reflections);
-
-        // 2. [핵심 추가] DOM 업데이트가 끝난 직후, 원래 있던 스크롤 위치로 즉시 복원합니다.
-        window.scrollTo(0, scrollPosition);
+        // 필터링된 '성찰 기록'과, 여기서 직접 필터링한 '하루 일기'를 합칩니다.
+        const combinedEntries = [...reflections, ...filteredSummaries];
+        combinedEntries.sort((a, b) => new Date(b.entry_date) - new Date(a.entry_date));
+        
+        renderReflectionTimeline(timelineContainer, combinedEntries);
     },
 
     // [역할 2] 탭이 보일 때마다 호출되는 '진입점' 함수
