@@ -7,6 +7,7 @@ import { GeneralSettings } from '../modules/settings/GeneralSettings.js';
 import { MemoryVisualizer } from '../modules/settings/MemoryVisualizer.js'; 
 import { MemoryBrowser } from '../modules/settings/MemoryBrowser.js'; 
 import { LunaDiary } from '../modules/settings/LunaDiary.js';
+import { Dashboard } from '../modules/settings/Dashboard.js';
 
 let elements = {};
 let isInitialized = false;
@@ -162,6 +163,8 @@ export const SettingsController = {
         } else if (tabId === 'tab-luna-diary') {
             // 'show'는 타임라인만 새로고침하는 가벼운 역할을 합니다.
             LunaDiary.show(); 
+        } else if (tabId === 'tab-dashboard') { // 대시보드
+        Dashboard.init(); // 대시보드의 초기화를 담당하는 init 함수를 호출합니다.
         }
     },
     

@@ -85,6 +85,9 @@
         }
         
     </style>
+
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
 </head>
 <body>
     <div id="app-loading-overlay">
@@ -195,7 +198,7 @@
             <div id="settings-page">
                 <div class="settings-page-header"><h1>설정</h1></div>
                 <div class="settings-page-layout">
-                    <nav class="settings-nav"><ul id="settings-tabs-list"><li><button class="tab-btn active" data-tab="tab-api">API 및 모델</button></li><li><button class="tab-btn" data-tab="tab-interface">인터페이스</button></li><li><button class="tab-btn" data-tab="tab-data">데이터 관리</button></li><li><button class="tab-btn" data-tab="tab-usage">API 사용량</button></li><li><button class="tab-btn" data-tab="tab-memory-browser">📚 기억 브라우저</button></li><li><button class="tab-btn" data-tab="tab-luna-diary">📔 루나의 일기장</button></li></ul></nav>
+                    <nav class="settings-nav"><ul id="settings-tabs-list"><li><button class="tab-btn active" data-tab="tab-api">API 및 모델</button></li><li><button class="tab-btn" data-tab="tab-interface">인터페이스</button></li><li><button class="tab-btn" data-tab="tab-data">데이터 관리</button></li><li><button class="tab-btn" data-tab="tab-usage">API 사용량</button></li><li><button class="tab-btn" data-tab="tab-memory-browser">📚 기억 브라우저</button></li><li><button class="tab-btn" data-tab="tab-luna-diary">📔 루나의 일기장</button></li><li><button class="tab-btn" data-tab="tab-dashboard">📊 루나 대시보드</button></li></ul></nav>
                     <main class="settings-content">
                         <div id="tab-api" class="tab-content active">
                            <div class="settings-section"><div class="settings-group settings-group--default"><label for="api-key">기본 Gemini API Key</label><div class="api-input-wrapper"><input type="password" id="api-key" placeholder="기본 API 키를 입력하세요"><button id="validate-key-btn">API 키 검증</button></div></div><div id="validation-status" class="status-message"></div></div>
@@ -256,13 +259,38 @@
                                 </div>
                             </div>
                         </div>
-                        <!-- ▼▼▼▼▼ 바로 여기에 새 탭의 콘텐츠 공간을 추가해주세요 ▼▼▼▼▼ -->
+
+                        <!-- 📊 루나 OS 대시보드 -->
+                        <div id="tab-dashboard" class="tab-content">
+                            <div class="settings-section">
+                                <h2 class="section-title">📊 루나 OS 대시보드</h2>
+                                <p class="section-description">루나의 모든 지적 자산(기억, 파일, 리포트, 작업)을 탐색하고 관리합니다.</p>
+
+                                <!-- 1. 대시보드 하위 탭 메뉴 -->
+                                <div class="dashboard-tabs">
+                                    <button class="dashboard-tab-btn active" data-dashboard-tab="dashboard-memories">🧠 Memories</button>
+                                    <button class="dashboard-tab-btn" data-dashboard-tab="dashboard-files">📂 Files</button>
+                                    <button class="dashboard-tab-btn" data-dashboard-tab="dashboard-reports">🧾 Reports</button>
+                                    <button class="dashboard-tab-btn" data-dashboard-tab="dashboard-tasks">📅 Tasks</button>
+                                </div>
+
+                                <!-- 2. 대시보드 하위 탭 컨텐츠 영역 -->
+                                <div class="dashboard-content">
+                                    <div id="dashboard-memories" class="dashboard-pane active"><p>Memories 데이터를 불러오는 중...</p></div>
+                                    <div id="dashboard-files" class="dashboard-pane"><p>Files 데이터를 불러오는 중...</p></div>
+                                    <div id="dashboard-reports" class="dashboard-pane"><p>Reports 데이터를 불러오는 중...</p></div>
+                                    <div id="dashboard-tasks" class="dashboard-pane"><p>Tasks 데이터를 불러오는 중...</p></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 📔 루나의 일기장 -->
                         <div id="tab-luna-diary" class="tab-content">
                             <div class="settings-section">
                                 <h2 class="section-title">📔 루나의 일기장</h2>
                                 <p class="section-description">최근 7일간 루나가 기록한 감정의 분포와 성장 기록을 보여줍니다.</p>
                                 
-                                <!-- ▼▼▼▼▼ 바로 여기에 새 섹션을 추가해주세요 ▼▼▼▼▼ -->
+                                <!-- ✨ 루나의 주간 메타 성찰 -->
                                 <div class="settings-section" style="margin-top: 30px;">
                                     <h2 class="section-title">✨ 루나의 주간 메타 성찰</h2>
                                     <p class="section-description">AI가 스스로 지난 7일간의 감정 흐름과 성장 과정을 분석한 리포트입니다.</p>
@@ -289,12 +317,12 @@
                                 <!-- 구분선 -->
                                 <hr style="border: 1px solid var(--border-color); margin: 30px 0;">
 
-                                <!-- 4. [업그레이드] 지능형 성장 기록 탐색기 -->
+                                <!-- 4. 🌱 루나의 지능형 성장 기록 탐색기 -->
                                 <div class="settings-section">
                                     <h2 class="section-title">🌱 루나의 성장 기록 탐색기</h2>
                                     <p class="section-description">루나의 모든 성찰 기록(일기)을 키워드나 기간으로 검색하고 필터링합니다.</p>
                                     
-                                    <!-- ▼▼▼ [새로운 기능] 검색 및 필터 컨트롤 UI ▼▼▼ -->
+                                    <!-- 검색 및 필터 컨트롤 UI -->
                                     <div id="diary-controls" style="display: flex; gap: 10px; margin: 20px 0;">
                                         <input type="text" id="diary-search-query" placeholder="일기 내용에서 키워드 검색..." style="flex-grow: 1; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-color); background-color: var(--background-color); color: var(--text-color);">
                                         <select id="diary-time-range" style="padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-color); background-color: var(--background-color); color: var(--text-color);">
@@ -305,11 +333,12 @@
                                         <button id="diary-search-btn" type="button" style="padding: 8px 20px; border: none; border-radius: 6px; background-color: var(--primary-color); color: white; cursor: pointer;">검색</button>
                                     </div>
                                     
-                                    <!-- ▼▼▼ 검색 결과가 표시될 공간 (기존 컨테이너 재활용) ▼▼▼ -->
+                                    <!-- 검색 결과가 표시될 공간  -->
                                     <div id="reflection-timeline-container" style="margin-top: 15px; height: 500px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px; padding: 15px;">
                                         <p>검색 버튼을 눌러 루나의 성장 기록을 조회하세요.</p>
                                     </div>
                                 </div>
+                        
                         
                     </main>
                 </div>
